@@ -103,4 +103,4 @@ public/                # fetch failed
 - [Modrinth](https://modrinth.com) fetch failed [CurseForge](https://curseforge.com) — fetch failed
 - [shadcn/ui](https://ui.shadcn.com) — fetch failed
 - [Tabler Icons](https://tabler-icons.io) — fetch failed
-- [Долбаёб (разраб](https://github.com/XneonTeam/Xneon-Launcher) — fetch failed
+- [Долбаёб (разраб)](https://github.com/XneonTeam/Xneon-Launcher) — fetch failed
