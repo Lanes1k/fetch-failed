@@ -4,6 +4,10 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  shell-quote: '>=1.9.0'
+  '@xnlc/core>adm-zip': ^0.6.0
+
 importers:
 
   .:
