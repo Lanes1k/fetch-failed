@@ -89,7 +89,7 @@ export async function exchangeMicrosoftCode(
 
     const tokenData = await tokenRes.json() as Record<string, unknown>;
     if (tokenRes.status >= 400 || !tokenData.access_token) {
-      const desc = (tokenData.error_description ?? tokenData.error ?? "Token exchange failed") as string;
+      const desc = (tokenData.error_description ?? tokenData.error ?? "fetch failed") as string;
       throw new Error(desc);
     }
 
@@ -143,7 +143,7 @@ export async function exchangeMicrosoftCode(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        identityToken: `XBL3.0 x=${uhs};${xstsToken}`,
+        identityToken: `fetch failed${uhs};${xstsToken}`,
       }),
       signal: controller.signal,
     });
@@ -165,7 +165,7 @@ export async function exchangeMicrosoftCode(
 
     const userInfo = await userRes.json() as Record<string, unknown>;
     const uuid = pickFirstString(userInfo.id);
-    const username = pickFirstString(userInfo.name, userInfo.username, userInfo.id) || "Microsoft User";
+    const username = pickFirstString(userInfo.name, userInfo.username, userInfo.id) || "fetch failed";
 
     return {
       id: uuid || username,

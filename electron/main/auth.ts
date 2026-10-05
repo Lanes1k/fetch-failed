@@ -67,14 +67,14 @@ function pickFirstString(...values: unknown[]): string {
 import { getElyClientSecret } from "./config"
 
 const ELY_REDIRECT_URI = "http://localhost:51234/elyby/callback"
-const ELY_SCOPE = "account_info minecraft_server_session offline_access"
+const ELY_SCOPE = "fetch failed"
 const ELY_DEVICE_CODE_URL = "https://account.ely.by/api/oauth2/v1/devicecode"
 const ELY_DEVICE_TOKEN_URL = "https://account.ely.by/api/oauth2/v1/token"
 const ELY_INFO_URL = "https://account.ely.by/api/account/v1/info"
 
 const XN_REDIRECT_URI = "http://localhost:5123/xneon/callback"
 const XN_CLIENT_ID = "rxBXISdaEO9P"
-const XN_SCOPE = "account_info offline_access minecraft_server_session"
+const XN_SCOPE = "fetch failed"
 const XN_AUTH_SERVER = "https://skins.xneon.org"
 const XN_DEVICE_CODE_URL = `${XN_AUTH_SERVER}/api/oauth2/v1/devicecode`
 const XN_DEVICE_TOKEN_URL = `${XN_AUTH_SERVER}/api/oauth2/v1/token`
@@ -112,7 +112,7 @@ function createAuthCallbackHandler(
     if (!authWindow.isDestroyed()) {
       authWindow.close()
     }
-    reject(new Error("fetch failed"))
+    reject(new Error("Авторизация отменена"))
   }
 
   const handleCallback = (url: string) => {
@@ -128,7 +128,7 @@ function createAuthCallbackHandler(
         if (!authWindow.isDestroyed()) {
           authWindow.close()
         }
-        reject(new Error(isDenied ? "fetch failed" : errorDesc))
+        reject(new Error(isDenied ? "Авторизация отменена" : errorDesc))
         return
       }
       const code = params.get("code")
@@ -138,7 +138,7 @@ function createAuthCallbackHandler(
         if (!authWindow.isDestroyed()) {
           authWindow.close()
         }
-        reject(new Error("State mismatch"))
+        reject(new Error("fetch failed"))
         return
       }
       if (!code) {
@@ -146,7 +146,7 @@ function createAuthCallbackHandler(
         if (!authWindow.isDestroyed()) {
           authWindow.close()
         }
-        reject(new Error("No authorization code received"))
+        reject(new Error("fetch failed"))
         return
       }
       cleanup()
@@ -302,12 +302,15 @@ ipcMain.handle("auth:microsoft-login", async (): Promise<MicrosoftAccountPayload
 
 async function exchangeElyByCode(code: string): Promise<ElyByAccountPayload> {
   const controller = new AbortController()
+  // Таймер снимаем в finally: раньше при успешном обмене он продолжал тикать
+  // все 30 секунд, а затем абортировал уже ненужный контроллер и реджектил
+  // проигравший промис (лишний таймер + потенциальный unhandled rejection).
+  let timeoutTimer: NodeJS.Timeout | null = null
   const timeout = new Promise<never>((_, reject) => {
-    const timer = setTimeout(() => {
+    timeoutTimer = setTimeout(() => {
       controller.abort()
       reject(new Error("fetch failed"))
     }, 30000)
-    controller.signal.addEventListener("abort", () => clearTimeout(timer))
   })
 
   try {
@@ -332,7 +335,7 @@ async function exchangeElyByCode(code: string): Promise<ElyByAccountPayload> {
 
     const tokenData = await tokenRes.json() as Record<string, unknown>
     if (tokenRes.status >= 400 || !tokenData.access_token) {
-      const desc = (tokenData.error_description ?? tokenData.error ?? "Token exchange failed") as string
+      const desc = (tokenData.error_description ?? tokenData.error ?? "fetch failed") as string
       throw new Error(desc)
     }
 
@@ -360,6 +363,8 @@ async function exchangeElyByCode(code: string): Promise<ElyByAccountPayload> {
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw new Error("fetch failed")
     throw err instanceof Error ? err : new Error(String(err))
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer)
   }
 }
 
@@ -396,12 +401,13 @@ async function fetchXnAccountInfo(accessToken: string): Promise<{ id: string; uu
 
 async function exchangeXnSkinsCode(code: string, verifier: string): Promise<XnSkinsAccountPayload> {
   const controller = new AbortController()
+  // См. exchangeElyByCode: таймер обязательно снимаем при успехе.
+  let timeoutTimer: NodeJS.Timeout | null = null
   const timeout = new Promise<never>((_, reject) => {
-    const timer = setTimeout(() => {
+    timeoutTimer = setTimeout(() => {
       controller.abort()
       reject(new Error("fetch failed"))
     }, 30000)
-    controller.signal.addEventListener("abort", () => clearTimeout(timer))
   })
 
   try {
@@ -425,7 +431,7 @@ async function exchangeXnSkinsCode(code: string, verifier: string): Promise<XnSk
 
     const tokenData = await tokenRes.json() as Record<string, unknown>
     if (tokenRes.status >= 400 || !tokenData.access_token) {
-      const desc = (tokenData.error_description ?? tokenData.error ?? "Token exchange failed") as string
+      const desc = (tokenData.error_description ?? tokenData.error ?? "fetch failed") as string
       throw new Error(desc)
     }
 
@@ -444,6 +450,8 @@ async function exchangeXnSkinsCode(code: string, verifier: string): Promise<XnSk
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw new Error("fetch failed")
     throw err instanceof Error ? err : new Error(String(err))
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer)
   }
 }
 
@@ -471,7 +479,7 @@ async function requestDeviceCode(clientId: string, scope: string, deviceCodeUrl:
 
   const rsp = await response.json() as Record<string, unknown>
   if (!response.ok || rsp.error || !rsp.device_code || !rsp.user_code || !rsp.verification_uri || !rsp.expires_in) {
-    throw new Error(`Device authorization failed: ${(rsp.error_description as string) || (rsp.error as string) || `HTTP ${response.status}`}`)
+    throw new Error(`fetch failed${(rsp.error_description as string) || (rsp.error as string) || `HTTP ${response.status}`}`)
   }
 
   const interval = typeof rsp.interval === "number" ? rsp.interval : 5
@@ -547,13 +555,13 @@ async function xboxUserStep(msaAccessToken: string): Promise<XToken> {
   }, { retries: 2 })
 
   const raw = await response.text()
-  if (!response.ok) throw new Error(`Xbox user authentication failed: HTTP ${response.status}: ${raw}`)
+  if (!response.ok) throw new Error(`fetch failed${response.status}: ${raw}`)
 
   const obj = JSON.parse(raw) as Record<string, unknown>
   const token = obj.Token as string | undefined
   const xui = (obj.DisplayClaims as { xui?: Array<{ uhs?: string }> } | undefined)?.xui
   const uhs = xui?.[0]?.uhs ?? ""
-  if (!token || !uhs) throw new Error("Xbox user authentication: missing token or uhs")
+  if (!token || !uhs) throw new Error("fetch failed")
 
   return { token, uhs }
 }
@@ -576,12 +584,12 @@ async function xstsStep(userToken: string): Promise<XToken> {
       const obj = JSON.parse(raw) as Record<string, unknown>
       xerr = typeof obj.XErr === "number" ? obj.XErr : undefined
     } catch { /* ignore */ }
-    throw new Error(`XSTS authorization failed: HTTP ${response.status}${xerr !== undefined ? ` (XErr ${xerr})` : ""}`)
+    throw new Error(`fetch failed${response.status}${xerr !== undefined ? ` (XErr ${xerr})` : ""}`)
   }
 
   const obj = JSON.parse(raw) as Record<string, unknown>
   const token = obj.Token as string | undefined
-  if (!token) throw new Error("XSTS authorization: missing token")
+  if (!token) throw new Error("fetch failed")
   return { token, uhs: "" }
 }
 
@@ -589,7 +597,7 @@ async function minecraftLauncherLogin(uhs: string, xstsToken: string): Promise<{
   const response = await fetchWithRetry(MINECRAFT_LAUNCHER_LOGIN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ xtoken: `XBL3.0 x=${uhs};${xstsToken}`, platform: "PC_LAUNCHER" }),
+    body: JSON.stringify({ xtoken: `fetch failed${uhs};${xstsToken}`, platform: "PC_LAUNCHER" }),
   }, { retries: 2 })
 
   const raw = await response.text()
@@ -599,9 +607,9 @@ async function minecraftLauncherLogin(uhs: string, xstsToken: string): Promise<{
   } catch {
     throw new Error(`Failed to get Minecraft access token: invalid JSON (HTTP ${response.status})`)
   }
-  if (!response.ok) throw new Error(`Failed to get Minecraft access token: HTTP ${response.status}: ${raw}`)
+  if (!response.ok) throw new Error(`fetch failed${response.status}: ${raw}`)
   if (typeof obj.access_token !== "string" || typeof obj.username !== "string") {
-    throw new Error("Failed to parse the Minecraft access token response.")
+    throw new Error("fetch failed")
   }
   return { accessToken: obj.access_token, username: obj.username }
 }
@@ -620,9 +628,9 @@ async function minecraftProfile(accessToken: string): Promise<{ id: string; name
   } catch {
     throw new Error(`Minecraft profile failed: invalid JSON (HTTP ${response.status})`)
   }
-  if (!response.ok) throw new Error(`Minecraft profile failed: HTTP ${response.status}: ${raw}`)
+  if (!response.ok) throw new Error(`fetch failed${response.status}: ${raw}`)
   if (typeof obj.id !== "string" || typeof obj.name !== "string") {
-    throw new Error("Minecraft Java profile response could not be parsed")
+    throw new Error("fetch failed")
   }
   return { id: obj.id, name: obj.name }
 }
@@ -634,7 +642,7 @@ async function exchangeDeviceMsaForMinecraft(msaAccessToken: string, refreshToke
   const profile = await minecraftProfile(mc.accessToken)
 
   const uuid = profile.id || mc.username
-  const username = profile.name || mc.username || "Microsoft User"
+  const username = profile.name || mc.username || "fetch failed"
 
   return {
     id: uuid || username,

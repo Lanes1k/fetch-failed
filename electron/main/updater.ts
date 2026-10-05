@@ -1,31 +1,14 @@
 import { autoUpdater, UpdateInfo } from "electron-updater"
-import { app, ipcMain, BrowserWindow } from "electron"
-import { isDev, logRuntime, logRuntimeDebug } from "./runtime"
+import { app, ipcMain } from "electron"
+import { isDev, logRuntime, logRuntimeDebug, sendToRenderer } from "./runtime"
 import { isLaunchActive } from "./minecraft-core"
+import { isVersionNewer } from "./utils/version"
 
 let pendingUpdate: UpdateInfo | null = null
 let isDownloading = false
 let updateDownloaded = false
 
-function isVersionNewer(remote: string, local: string): boolean {
-  const r = remote.replace(/^v/, "").split(".").map(Number)
-  const l = local.replace(/^v/, "").split(".").map(Number)
-  for (let i = 0; i < Math.max(r.length, l.length); i++) {
-    const a = r[i] ?? 0
-    const b = l[i] ?? 0
-    if (a > b) return true
-    if (a < b) return false
-  }
-  return false
-}
-
 const CURRENT_VERSION = app.getVersion()
-
-function sendToRenderer(channel: string, ...args: unknown[]) {
-  BrowserWindow.getAllWindows().forEach((win) => {
-    if (!win.isDestroyed()) win.webContents.send(channel, ...args)
-  })
-}
 
 export function registerUpdater() {
   autoUpdater.autoDownload = false
@@ -113,7 +96,7 @@ export function registerUpdater() {
 
   ipcMain.handle("update:download", async () => {
     if (!pendingUpdate) return { success: false, error: "No update available" }
-    if (isDownloading) return { success: false, error: "Download already in progress" }
+    if (isDownloading) return { success: false, error: "fetch failed" }
     if (isLaunchActive()) {
       logRuntime("[Updater] Update download blocked: Minecraft is running")
       return { success: false, error: "Minecraft is running. Close the game to download the update." }
@@ -138,10 +121,6 @@ export function registerUpdater() {
     autoUpdater.quitAndInstall(false, true)
   })
 
-  ipcMain.handle("update:info", () => ({
-    version: pendingUpdate?.version ?? null,
-    downloaded: updateDownloaded,
-  }))
 
   if (!isDev) {
     setTimeout(() => {

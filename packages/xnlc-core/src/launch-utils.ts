@@ -72,7 +72,7 @@ async function ensureDownloadedFile(filePath: string, url: string, label: string
   ensureParentDir(filePath);
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`${label} download failed: ${response.status} ${response.statusText}`);
+    throw new Error(`${label}fetch failed${response.status} ${response.statusText}`);
   }
 
   writeFileSync(filePath, Buffer.from(await response.arrayBuffer()));
@@ -137,7 +137,7 @@ export function createLaunchAuth(account: AuthorizationAccount): LaunchAuth {
 export function resolveLaunchRequest(options: LaunchRequestOptions): ResolvedLaunchRequest | { error: string } {
   const mcVersion = options.mcVersion ?? options.version;
   if (!mcVersion) {
-    return { error: "No Minecraft version specified" };
+    return { error: "fetch failed" };
   }
 
   const modLoaderToLoaderType: Record<string, LoaderType> = {

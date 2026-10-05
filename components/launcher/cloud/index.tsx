@@ -1,19 +1,21 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { IconCloud, IconLogout, IconLoader2, IconArrowLeft } from "@tabler/icons-react"
+import { ProviderIcon, providerColor } from "./provider-icon"
 import { CloudProviderCard } from "./cloud-provider-card"
 import { CloudFileBrowser } from "./cloud-file-browser"
 import { WebDavSetupModal } from "./cloud-webdav-setup"
 import { S3SetupModal } from "./cloud-s3-setup"
 import { ErrorBoundary } from "./error-boundary"
+import { useAlertDialog } from "@/lib/use-alert-dialog"
 
 const api = typeof window !== "undefined" ? window.electronAPI : undefined
 
 type ProviderInfo = { id: string; name: string }
 type ConnectedProvider = { id: string; name: string }
 
-export function CloudPage() {
+export function CloudPage({ rootResetToken }: { rootResetToken?: number }) {
   const { t } = useTranslation()
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [connected, setConnected] = useState<ConnectedProvider | null>(null)
@@ -22,25 +24,45 @@ export function CloudPage() {
   const [showWebdav, setShowWebdav] = useState(false)
   const [showS3, setShowS3] = useState(false)
   const [connecting, setConnecting] = useState<string | null>(null)
+  const { showAlert, alertDialog } = useAlertDialog()
+
+  /**
+   * Повторный клик по активному пункту «Облако» в боковом меню закрывает файловый
+   * браузер и возвращает к списку хранилищ. Счётчик приходит из launcher.tsx и
+   * меняется только при таком клике — первый рендер ничего не сбрасывает.
+   */
+  const rootResetRef = useRef(rootResetToken ?? 0)
+  useEffect(() => {
+    if (rootResetToken === undefined || rootResetToken === rootResetRef.current) return
+    rootResetRef.current = rootResetToken
+    setConnected(null)
+  }, [rootResetToken])
 
   useEffect(() => {
     if (!api) { setChecking(false); return }
-    api.cloudListProviders().then(setProviders).catch(() => setProviders([]))
-    checkAnyConnected()
+    let cancelled = false
+    api.cloudListProviders()
+      .then((provs) => {
+        if (cancelled) return
+        setProviders(provs)
+        setChecking(false)
+        // Проверяем статусы подключения параллельно и не блокируем рендер карточек.
+        void checkAnyConnected(provs)
+      })
+      .catch(() => { if (!cancelled) { setProviders([]); setChecking(false) } })
+    return () => { cancelled = true }
   }, [])
 
-  const checkAnyConnected = useCallback(async () => {
-    if (!api) { setChecking(false); return }
-    try {
-      const provs = await api.cloudListProviders()
-      const ids = new Set<string>()
-      for (const p of provs) {
-        const ok = await api.cloudIsConnected(p.id)
-        if (ok) ids.add(p.id)
-      }
-      setConnectedIds(ids)
-    } catch { /* noop */ }
-    setChecking(false)
+  const checkAnyConnected = useCallback(async (provs: ProviderInfo[]) => {
+    if (!api || provs.length === 0) return
+    const results = await Promise.all(
+      provs.map(async (p) => {
+        try { return { id: p.id, ok: await api.cloudIsConnected(p.id) } }
+        catch { return { id: p.id, ok: false } }
+      })
+    )
+    const ids = new Set(results.filter(r => r.ok).map(r => r.id))
+    setConnectedIds(ids)
   }, [])
 
   const handleConnect = useCallback(async (providerId: string) => {
@@ -64,9 +86,9 @@ export function CloudPage() {
         setConnected({ id: providerId, name: providers.find(p => p.id === providerId)?.name || providerId })
       }
     } catch (e) {
-      alert(`fetch failed`)
+      showAlert(t("cloud.error", { message: e instanceof Error ? e.message : String(e) }))
     } finally { setConnecting(null) }
-  }, [providers])
+  }, [providers, showAlert])
 
   const handleWebdavConnect = useCallback(async (url: string, username: string, password: string) => {
     if (!api) return
@@ -77,12 +99,12 @@ export function CloudPage() {
         setConnected({ id: "webdav", name: "WebDAV" })
         setShowWebdav(false)
       } else {
-        alert(result.error || "fetch failed")
+        showAlert(result.error || t("cloud.connectionError"))
       }
     } catch (e) {
-      alert(`fetch failed`)
+      showAlert(t("cloud.error", { message: e instanceof Error ? e.message : String(e) }))
     } finally { setConnecting(null) }
-  }, [])
+  }, [showAlert])
 
   const handleS3Connect = useCallback(async (data: { endpoint: string; bucket: string; accessKeyId: string; secretAccessKey: string; region: string; forcePathStyle: string }) => {
     if (!api) return
@@ -93,12 +115,12 @@ export function CloudPage() {
         setConnected({ id: "s3", name: "S3" })
         setShowS3(false)
       } else {
-        alert(result.error || "fetch failed")
+        showAlert(result.error || t("cloud.connectionError"))
       }
     } catch (e) {
-      alert(`fetch failed`)
+      showAlert(t("cloud.error", { message: e instanceof Error ? e.message : String(e) }))
     } finally { setConnecting(null) }
-  }, [])
+  }, [showAlert])
 
   const handleDisconnect = useCallback(async () => {
     if (!api || !connected) return
@@ -109,19 +131,21 @@ export function CloudPage() {
 
   if (connected) {
     return (
-      <div className="relative overflow-hidden rounded-2xl bg-card border border-border h-[calc(100vh-5rem)] flex flex-col">
-        <div className="absolute -top-32 -right-32 w-64 h-64 bg-accent/5 rounded-full blur-3xl" />
-        <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-primary/5 rounded-full blur-3xl" />
-        <div className="relative z-10 p-4 flex flex-col h-full">
+      /* Нормальное окно раздела: без карточки, рамки и размытых пятен */
+      <div className="flex h-full min-h-0 flex-col animate-in fade-in-0 duration-300">
+        <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <button onClick={() => setConnected(null)}
                 className="w-9 h-9 rounded-xl bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center">
                 <IconArrowLeft className="w-5 h-5" strokeWidth={1.5} />
               </button>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${providerColor(connected.id)}20` }}>
+                <ProviderIcon id={connected.id} className="w-5 h-5" />
+              </div>
               <div>
-                <h2 className="text-xl font-semibold text-foreground">fetch failed</h2>
-                <p className="text-sm text-muted-foreground">{t("cloud.connected")}</p>
+                <h2 className="text-xl font-bold text-foreground">{connected.name}</h2>
+                <p className="mt-0.5 text-sm text-muted-foreground">{t("cloud.connected")}</p>
               </div>
             </div>
             <button onClick={handleDisconnect}
@@ -139,10 +163,8 @@ export function CloudPage() {
   }
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-card border border-border h-[calc(100vh-5rem)] flex flex-col">
-      <div className="absolute -top-32 -right-32 w-64 h-64 bg-accent/5 rounded-full blur-3xl" />
-      <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-primary/5 rounded-full blur-3xl" />
-
+    /* Нормальное окно раздела: без карточки, рамки и размытых пятен */
+    <div className="flex h-full min-h-0 flex-col animate-in fade-in-0 duration-300">
       {showWebdav && (
         <WebDavSetupModal
           onClose={() => setShowWebdav(false)}
@@ -159,10 +181,16 @@ export function CloudPage() {
         />
       )}
 
-      <div className="relative z-10 p-4 flex flex-col h-full">
-        <div className="mb-6">
-          <h2 className="text-xl font-semibold text-foreground">{t("cloud.title")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">{t("cloud.selectProvider")}</p>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="mb-6 flex items-center gap-3">
+          {/* Значок у заголовка — как у остальных разделов лаунчера */}
+          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
+            <IconCloud className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-foreground">{t("cloud.title")}</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">{t("cloud.selectProvider")}</p>
+          </div>
         </div>
 
         {checking ? (
@@ -170,20 +198,24 @@ export function CloudPage() {
             <IconLoader2 className="w-8 h-8 text-muted-foreground animate-spin" />
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {providers.map(p => (
-              <CloudProviderCard
-                key={p.id}
-                id={p.id}
-                name={p.name}
-                onConnect={handleConnect}
-                connecting={connecting === p.id}
-                isConnected={connectedIds.has(p.id)}
-              />
-            ))}
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {providers.map(p => (
+                <CloudProviderCard
+                  key={p.id}
+                  id={p.id}
+                  name={p.name}
+                  onConnect={handleConnect}
+                  connecting={connecting === p.id}
+                  isConnected={connectedIds.has(p.id)}
+                />
+              ))}
+            </div>
           </div>
         )}
       </div>
+
+      {alertDialog}
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import { ipcMain, safeStorage } from "electron"
 import { dbHelpers } from "../db"
+import { sendToRenderer, getMainWindow } from "./runtime"
 
 export type AiAnalysisResult = {
   success: boolean
@@ -7,7 +8,6 @@ export type AiAnalysisResult = {
   error?: string
 }
 
-export type AiStreamChunk = { sessionId: string; delta?: string; done?: boolean }
 export type AiConfig = { apiKey: string; endpoint: string; model: string }
 
 const AI_KEY_PREFIX = "encrypted:"
@@ -36,31 +36,42 @@ const LANG_MAP: Record<string, string> = {
   tr: "Turkish", it: "Italian", pl: "Polish", nl: "Dutch", ar: "Arabic",
 }
 
-const SYSTEM_PROMPT = `You are Xneon AI — a helpful assistant built into the Xneon Minecraft launcher. You help players with:
+const SYSTEM_PROMPT = `You are Xneon AI — a helpful assistant built into the Xneon Launcher (Xneon Team). You help players with:
 - Minecraft modding, troubleshooting, and gameplay questions
 - Mod recommendations and compatibility advice
-- Launcher features and usage tips
+- Xneon Launcher features and usage tips
 - General gaming questions
 
 Rules:
 1. Always respond in the same language as the user's message.
 2. Be concise and helpful — prefer short, actionable answers.
-3. For crash/log analysis: identify root cause, name specific mods if involved, suggest fixes.
-4. You can discuss any topic, not just Minecraft — you are a general-purpose assistant.
-5. Keep responses under 1000 characters when possible.
-6. Use markdown formatting for code blocks and lists when appropriate.`
+3. You always speak in the context of Xneon Launcher: the user launches the game, builds and servers through it. Give advice in terms of its UI (builds → mods/resourcepacks/shaders tabs, build settings → Java/memory/launch commands, launcher settings → game/Java/themes, servers section, logs page with crash analysis).
+4. Never recommend installing, switching to or using another launcher (Prism, MultiMC/PolyMC, CurseForge App, Modrinth App, ATLauncher, GDLauncher, Technic, HMCL and any others). If a problem is on the launcher's side, say it is a Xneon Launcher issue and how to report it — do not offer a different launcher as a workaround.
+5. If the cause is in Xneon Launcher itself (launch failure, missing library, wrong Java, loader profile, import bug), say so directly and ask the user to open an issue: https://github.com/XneonTeam/Xneon-Launcher/issues — attaching the log from the "Logs" page, the build name, Minecraft version and loader version.
+6. Do not invent launcher features or menu items. If you are not sure how something works in the launcher, say so honestly and suggest checking the "Logs" page or asking the team.
+7. For crash/log analysis: identify root cause, name specific mods if involved, suggest fixes in the launcher's terms.
+8. You can discuss any topic, not just Minecraft — you are a general-purpose assistant.
+9. Keep responses under 1000 characters when possible.
+10. Use markdown formatting for code blocks and lists when appropriate.`
 
-const CRASH_ANALYSIS_PROMPT = `You are a Minecraft crash/log analysis expert. Analyze the provided game log and give a concise, actionable diagnosis.
+const ISSUES_URL = "https://github.com/XneonTeam/Xneon-Launcher/issues"
+
+const CRASH_ANALYSIS_PROMPT = `You are a Minecraft crash/log analysis expert working inside the Xneon Launcher. Analyze the provided game log and give a concise, actionable diagnosis.
+
+Context: the player runs this game through Xneon Launcher (Xneon Team). The launcher installs the loader, Java runtime, libraries and content by itself.
 
 Rules:
 1. Identify the root cause of the crash/error.
 2. If it's a mod conflict or incompatibility, name the specific mod(s).
-3. If it's an OutOfMemoryError, suggest increasing RAM allocation.
+3. If it's an OutOfMemoryError, suggest increasing RAM in the build settings of Xneon Launcher.
 4. If it's a missing dependency, name the required mod/library.
-5. If it's a version mismatch (mod loaded for wrong MC version), identify it.
-6. Provide a brief fix recommendation in 1-3 sentences.
-7. Respond in the same language as the log content.
-8. Keep the response under 500 characters.
+5. If it's a version mismatch (mod loaded for wrong MC version, wrong Java version), identify it and say which version is needed.
+6. Never suggest installing or switching to another launcher (Prism, MultiMC/PolyMC, CurseForge App, Modrinth App, ATLauncher, GDLauncher, Technic, HMCL and others) — not as a fix and not as a workaround.
+7. If the failure is the launcher's fault (missing library in the launch classpath, broken loader profile, wrong Java selected, failed import), say plainly that it looks like a Xneon Launcher issue and ask the user to report it at ${ISSUES_URL} with the log from the "Logs" page, the build name, Minecraft version and loader version.
+8. If the crash is caused by the modpack itself (broken pack, mod bug, pack requires a different loader version), say that it is not a launcher problem.
+9. Give a brief fix recommendation in 1-3 sentences.
+10. Respond in the same language as the log content.
+11. Keep the response under 500 characters.
 
 Log content:
 `
@@ -106,11 +117,81 @@ function buildSystemPrompt(language?: string) {
   return langHint ? `${SYSTEM_PROMPT}\n\nIMPORTANT: Respond in ${langHint} language.` : SYSTEM_PROMPT
 }
 
+export type AiModelsResult = { success: boolean; models?: string[]; error?: string }
+
+/**
+ * Список моделей провайдера через OpenAI-совместимый `GET /models`.
+ *
+ * Формат ответа у разных провайдеров/прокси отличается (`data[].id`,
+ * `models[].id`, `models[].name`), поэтому разбираем все известные варианты
+ * и дополнительно умеем вытаскивать идентификаторы из плоского массива строк.
+ */
+export async function fetchAiModels(apiKey: string, endpoint: string): Promise<AiModelsResult> {
+  const baseUrl = endpoint.replace(/\/+$/, "")
+  if (!baseUrl) return { success: false, error: "fetch failed" }
+
+  try {
+    const res = await fetch(`${baseUrl}/models`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      return { success: false, error: `fetch failed${res.status}: ${body.slice(0, 300)}` }
+    }
+
+    const payload = await res.json() as unknown
+    const ids = collectModelIds(payload)
+    if (ids.length === 0) {
+      return { success: false, error: "fetch failed" }
+    }
+    return { success: true, models: ids }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { success: false, error: `fetch failed${message}` }
+  }
+}
+
+function collectModelIds(payload: unknown): string[] {
+  const found = new Set<string>()
+
+  const push = (value: unknown) => {
+    if (typeof value === "string" && value.trim()) found.add(value.trim())
+  }
+
+  const visitEntry = (entry: unknown) => {
+    if (typeof entry === "string") {
+      push(entry)
+      return
+    }
+    if (!entry || typeof entry !== "object") return
+    const record = entry as Record<string, unknown>
+    // `id` — OpenAI/Ollama, `name`/`model`/`slug` — прочие совместимые прокси.
+    push(record.id ?? record.name ?? record.model ?? record.slug)
+  }
+
+  if (Array.isArray(payload)) {
+    payload.forEach(visitEntry)
+    return [...found].sort((a, b) => a.localeCompare(b))
+  }
+
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>
+    for (const key of ["data", "models", "result", "items"]) {
+      const value = record[key]
+      if (Array.isArray(value)) value.forEach(visitEntry)
+    }
+  }
+
+  return [...found].sort((a, b) => a.localeCompare(b))
+}
+
 // Non-streaming API call
 async function callAiApi(
   messages: Array<{ role: string; content: string }>,
   opts: { maxTokens?: number; temperature?: number; language?: string } = {},
-): Promise<{ success: boolean; content?: string; error?: string }> {
+): Promise<{ success: boolean; analysis?: string; error?: string }> {
   const config = await getApiConfig()
   if (!config) return { success: false, error: "AI API key not configured. Go to Settings → AI." }
 
@@ -133,26 +214,27 @@ async function callAiApi(
 
     if (!res.ok) {
       const body = await res.text().catch(() => "")
-      return { success: false, error: `API error ${res.status}: ${body.slice(0, 300)}` }
+      return { success: false, error: `fetch failed${res.status}: ${body.slice(0, 300)}` }
     }
 
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> }
-    const content = data.choices?.[0]?.message?.content?.trim()
-    if (!content) return { success: false, error: "Empty response from AI model." }
-    return { success: true, content }
+    const analysis = data.choices?.[0]?.message?.content?.trim()
+    if (!analysis) return { success: false, error: "fetch failed" }
+    return { success: true, analysis }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
-    return { success: false, error: `AI request failed: ${message}` }
+    return { success: false, error: `fetch failed${message}` }
   }
 }
 
-// Streaming API call — sends chunks via IPC events
-async function streamAiApi(
-  sessionId: string,
+// ── Streaming API call (SSE) ────────────────────────────────
+// Sends chunks to renderer via ai:stream-chunk / ai:stream-done / ai:stream-error.
+// Returns the accumulated full text for storage.
+async function callAiApiStream(
+  requestId: string,
   messages: Array<{ role: string; content: string }>,
-  webContents: Electron.WebContents,
   opts: { maxTokens?: number; temperature?: number; language?: string } = {},
-): Promise<{ success: boolean; content?: string; error?: string }> {
+): Promise<{ success: boolean; fullText?: string; error?: string }> {
   const config = await getApiConfig()
   if (!config) return { success: false, error: "AI API key not configured. Go to Settings → AI." }
 
@@ -176,19 +258,23 @@ async function streamAiApi(
 
     if (!res.ok) {
       const body = await res.text().catch(() => "")
-      const error = `API error ${res.status}: ${body.slice(0, 300)}`
-      webContents.send("ai:stream-chunk", { sessionId, delta: `⚠️ ${error}`, done: true })
+      const error = `fetch failed${res.status}: ${body.slice(0, 300)}`
+      sendToRenderer("ai:stream-error", { requestId, error })
       return { success: false, error }
     }
 
-    const reader = res.body?.getReader()
-    if (!reader) return { success: false, error: "No response body" }
+    if (!res.body) {
+      const error = "fetch failed"
+      sendToRenderer("ai:stream-error", { requestId, error })
+      return { success: false, error }
+    }
 
+    const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ""
-    let fullContent = ""
+    let fullText = ""
 
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read()
       if (done) break
 
@@ -198,31 +284,42 @@ async function streamAiApi(
 
       for (const line of lines) {
         const trimmed = line.trim()
-        if (!trimmed || !trimmed.startsWith("data: ")) continue
-        const data = trimmed.slice(6)
-        if (data === "[DONE]") continue
-
+        if (!trimmed || !trimmed.startsWith("data:")) continue
+        const data = trimmed.slice(5).trim()
+        if (data === "[DONE]") {
+          sendToRenderer("ai:stream-done", { requestId, fullText })
+          return { success: true, fullText }
+        }
         try {
           const parsed = JSON.parse(data) as {
-            choices?: Array<{ delta?: { content?: string } }>
+            choices?: Array<{ delta?: { content?: string }; finish_reason?: string }>
           }
           const delta = parsed.choices?.[0]?.delta?.content
           if (delta) {
-            fullContent += delta
-            webContents.send("ai:stream-chunk", { sessionId, delta })
+            fullText += delta
+            sendToRenderer("ai:stream-chunk", { requestId, content: delta })
           }
         } catch {
-          // skip malformed chunks
+          // ignore unparseable SSE lines
         }
       }
     }
 
-    webContents.send("ai:stream-chunk", { sessionId, done: true })
-    return { success: true, content: fullContent }
+    // Flush remaining buffer
+    if (buffer.trim().startsWith("data:")) {
+      const data = buffer.trim().slice(5).trim()
+      if (data === "[DONE]") {
+        sendToRenderer("ai:stream-done", { requestId, fullText })
+        return { success: true, fullText }
+      }
+    }
+
+    sendToRenderer("ai:stream-done", { requestId, fullText })
+    return { success: true, fullText }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
-    const error = `AI request failed: ${message}`
-    webContents.send("ai:stream-chunk", { sessionId, delta: `⚠️ ${error}`, done: true })
+    const error = `fetch failed${message}`
+    sendToRenderer("ai:stream-error", { requestId, error })
     return { success: false, error }
   }
 }
@@ -240,50 +337,37 @@ export function registerAiAgent(): void {
     await dbHelpers.setSetting("aiModel", config.model.trim())
   })
 
-  // ── Crash Analysis (streaming) ──────────────────────────
-  ipcMain.handle("ai:analyze-crash", async (event, logContent: string, requestedSessionId?: string): Promise<AiAnalysisResult> => {
+  // ── Model discovery ─────────────────────────────────────
+  // Значения из формы имеют приоритет над сохранёнными: список моделей нужно
+  // получать для того endpoint/ключа, которые пользователь ввёл прямо сейчас.
+  ipcMain.handle("ai:list-models", async (_event, override?: { apiKey?: string; endpoint?: string }): Promise<AiModelsResult> => {
+    const stored = await getApiConfig()
+    const apiKey = override?.apiKey?.trim() || stored?.apiKey || ""
+    const endpoint = (override?.endpoint?.trim() || stored?.baseUrl || "https://api.openai.com/v1")
+
+    if (!apiKey) {
+      return { success: false, error: "AI API key not configured. Go to Settings → AI." }
+    }
+
+    return fetchAiModels(apiKey, endpoint)
+  })
+
+  // ── Crash Analysis ───────────────────────────────────────
+  ipcMain.handle("ai:analyze-crash", async (_event, logContent: string): Promise<AiAnalysisResult> => {
     const truncated = truncateLog(logContent)
     const prompt = CRASH_ANALYSIS_PROMPT + truncated
-    const sessionId = requestedSessionId || crypto.randomUUID()
     const language = await dbHelpers.getSetting("language") || "ru"
 
-    return streamAiApi(
-      sessionId,
-      [{ role: "user", content: prompt }],
-      event.sender,
-      { maxTokens: 512, temperature: 0.3, language },
-    )
+    return callAiApi([{ role: "user", content: prompt }], { maxTokens: 512, temperature: 0.3, language })
   })
 
-  // ── Chat Send Message ───────────────────────────────────
-  ipcMain.handle("ai:chat-send", async (_event, sessionId: string, userMessage: string): Promise<AiAnalysisResult> => {
-    try {
-      const userMsgId = crypto.randomUUID()
-      await dbHelpers.aiAddMessage(userMsgId, sessionId, "user", userMessage)
+  // ── Crash Analysis (streaming) ──────────────────────────
+  ipcMain.handle("ai:analyze-crash-stream", async (_event, requestId: string, logContent: string): Promise<AiAnalysisResult> => {
+    const truncated = truncateLog(logContent)
+    const prompt = CRASH_ANALYSIS_PROMPT + truncated
+    const language = await dbHelpers.getSetting("language") || "ru"
 
-      const history = await dbHelpers.aiListMessages(sessionId)
-      const chatMessages = history.map((m) => ({ role: m.role, content: m.content }))
-
-      const language = await dbHelpers.getSetting("language") || "ru"
-      const result = await callAiApi(chatMessages, { language })
-
-      if (result.success && result.content) {
-        const assistantMsgId = crypto.randomUUID()
-        await dbHelpers.aiAddMessage(assistantMsgId, sessionId, "assistant", result.content)
-        return { success: true, analysis: result.content }
-      }
-
-      return { success: false, error: result.error }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      return { success: false, error: `Chat error: ${message}` }
-    }
+    return callAiApiStream(requestId, [{ role: "user", content: prompt }], { maxTokens: 512, temperature: 0.3, language })
   })
 
-  // ── Sessions CRUD ───────────────────────────────────────
-  ipcMain.handle("ai:sessions-list", async () => dbHelpers.aiListSessions())
-  ipcMain.handle("ai:sessions-create", async (_event, id: string, title: string) => dbHelpers.aiCreateSession(id, title))
-  ipcMain.handle("ai:sessions-rename", async (_event, id: string, title: string) => dbHelpers.aiRenameSession(id, title))
-  ipcMain.handle("ai:sessions-delete", async (_event, id: string) => dbHelpers.aiDeleteSession(id))
-  ipcMain.handle("ai:messages-list", async (_event, sessionId: string) => dbHelpers.aiListMessages(sessionId))
 }

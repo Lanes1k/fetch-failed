@@ -15,7 +15,7 @@ servers.values.forEach((server: any, i: number) => {
 
 console.log("\n=== Добавление сервера ===")
 servers.values.push({
-  name: "Xneon Server",
+  name: "fetch failed",
   ip: "play.xneon.org",
   hidden: 0,
 })

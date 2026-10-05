@@ -1,7 +1,8 @@
 import fs from "fs/promises"
-import { readArchiveText, readArchiveEntryAsDataUrl, loadAdmZip, loadToml, AdmZipType } from "./helpers"
+import path from "path"
+import { readArchiveText, readArchiveEntryAsDataUrl, loadAdmZip, loadToml, AdmZipType } from "./archive-utils"
 
-type ModMetadata = { name?: string; version?: string; description?: string; icon_url?: string; author?: string }
+export type ModMetadata = { name?: string; version?: string; description?: string; icon_url?: string; author?: string }
 
 function resolveFabricIconPath(icon: unknown): string | undefined {
   if (typeof icon === "string") {
@@ -239,25 +240,84 @@ function parseShaderProperties(zip: AdmZipType): ModMetadata | null {
   }
 }
 
+/**
+ * Метаданные локального контента: файла-архива или папки. Minecraft читает
+ * ресурспаки и шейдеры и распакованными, поэтому для папки смотрим pack.mcmeta,
+ * pack.png и shaders/shaders.properties.
+ */
+export async function readContentMetadataFromPath(target: string): Promise<ModMetadata> {
+  const stat = await fs.stat(target).catch(() => null)
+  if (!stat) return {}
+  if (!stat.isDirectory()) return readModMetadataFromArchive(target)
+  return (await readFolderMetadata(target)) ?? {}
+}
+
+async function readFolderMetadata(dirPath: string): Promise<ModMetadata | null> {
+  const packMcmeta = await fs.readFile(path.join(dirPath, "pack.mcmeta"), "utf8").catch(() => null)
+  if (packMcmeta) {
+    try {
+      const parsed = JSON.parse(packMcmeta) as { pack?: { pack_format?: number; description?: string | { text?: string; translate?: string } } }
+      const pack = parsed.pack
+      if (pack) {
+        const descRaw = pack.description
+        const description = typeof descRaw === "string"
+          ? descRaw
+          : descRaw && typeof descRaw === "object"
+            ? descRaw.text ?? descRaw.translate ?? undefined
+            : undefined
+        return {
+          version: pack.pack_format != null ? String(pack.pack_format) : undefined,
+          description,
+          icon_url: await readFileAsDataUrl(path.join(dirPath, "pack.png")),
+        }
+      }
+    } catch {
+      // битый pack.mcmeta — просто нет метаданных
+    }
+  }
+  const shadersDir = await fs.stat(path.join(dirPath, "shaders")).catch(() => null)
+  if (shadersDir?.isDirectory()) {
+    return { icon_url: await readFileAsDataUrl(path.join(dirPath, "shaders", "shaders.png")) }
+  }
+  return null
+}
+
+async function readFileAsDataUrl(filePath: string): Promise<string | undefined> {
+  const data = await fs.readFile(filePath).catch(() => null)
+  if (!data) return undefined
+  const ext = path.extname(filePath).toLowerCase()
+  const mime = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "image/png"
+  return `data:${mime};base64,${data.toString("base64")}`
+}
+
+/**
+ * Разбирает метаданные мода из уже открытого архива. Отделено от чтения файла,
+ * чтобы единый инспектор JAR (jar-inspector.ts) мог переиспользовать один и тот
+ * же прочитанный буфер для метаданных, зависимостей и отпечатка CurseForge.
+ */
+export async function parseModMetadataFromZip(zip: AdmZipType): Promise<ModMetadata> {
+  const parsers = [
+    parseNeoForgeModsToml,
+    parseForgeModsToml,
+    parseMcmodInfo,
+    parseQuiltModJson,
+    parseFabricModJson,
+    parseLiteModJson,
+    parsePackMcmeta,
+    parseShaderProperties,
+  ]
+  for (const parser of parsers) {
+    const result = await parser(zip)
+    if (result) return result
+  }
+  return {}
+}
+
 export async function readModMetadataFromArchive(filePath: string): Promise<ModMetadata> {
   try {
     const AdmZip = await loadAdmZip()
     const data = await fs.readFile(filePath)
-    const zip = new AdmZip(data)
-    const parsers = [
-      parseNeoForgeModsToml,
-      parseForgeModsToml,
-      parseMcmodInfo,
-      parseQuiltModJson,
-      parseFabricModJson,
-      parseLiteModJson,
-      parsePackMcmeta,
-      parseShaderProperties,
-    ]
-    for (const parser of parsers) {
-      const result = await parser(zip)
-      if (result) return result
-    }
+    return await parseModMetadataFromZip(new AdmZip(data))
   } catch {
     // ignore unreadable archive
   }

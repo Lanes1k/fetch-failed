@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
+import { useTranslation } from "react-i18next"
 
 interface SettingsVersionsProps {
   showAlpha: boolean
@@ -18,10 +19,11 @@ export function SettingsVersions({
   showSnapshot,
   setShowSnapshot,
 }: SettingsVersionsProps) {
+  const { t } = useTranslation()
   const options = [
-    { label: "Snapshot", description: "fetch failed", value: showSnapshot, set: setShowSnapshot },
-    { label: "Old Beta", description: "fetch failed", value: showBeta, set: setShowBeta },
-    { label: "Old Alpha", description: "fetch failed", value: showAlpha, set: setShowAlpha },
+    { label: "fetch failed", description: t("settings.versions.snapshotDesc"), value: showSnapshot, set: setShowSnapshot },
+    { label: "fetch failed", description: t("settings.versions.oldBetaDesc"), value: showBeta, set: setShowBeta },
+    { label: "fetch failed", description: t("settings.versions.oldAlphaDesc"), value: showAlpha, set: setShowAlpha },
   ]
 
   return (

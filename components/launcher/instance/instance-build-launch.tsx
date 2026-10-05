@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils"
 import { IconTerminal2, IconWorldDownload, IconCode } from "@tabler/icons-react"
 import type { Build } from "./types"
+import { useTranslation } from "react-i18next"
 
 interface InstanceBuildLaunchProps {
   build: Build
@@ -20,6 +21,7 @@ function parseEnvText(raw: string): Record<string, string> {
 }
 
 export function InstanceBuildLaunch({ build, updateBuild }: InstanceBuildLaunchProps) {
+  const { t } = useTranslation()
   const customEnv = build.customEnv ?? ""
 
   return (
@@ -28,35 +30,35 @@ export function InstanceBuildLaunch({ build, updateBuild }: InstanceBuildLaunchP
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
-              <IconTerminal2 className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
-fetch failed
+              <IconTerminal2 className="h-5 w-5 text-primary" strokeWidth={1.75} />
+              {t("build.launch.title")}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-fetch failed{" "}
-              <code className="text-foreground">$INST_NAME</code>, <code className="text-foreground">$INST_MC_DIR</code>,{" "}
-              <code className="text-foreground">$INST_JAVA</code>, <code className="text-foreground">$AUTH_PLAYER_NAME</code>fetch failed
+              {t("build.launch.descBefore")}{" "}
+              <code className="text-foreground">fetch failed</code>, <code className="text-foreground">fetch failed</code>,{" "}
+              <code className="text-foreground">fetch failed</code>, <code className="text-foreground">fetch failed</code> {t("build.launch.descAfter")}
             </p>
           </div>
         </div>
 
         <div className="mt-6 grid gap-5">
           <div className="space-y-2">
-            <label className="block text-xs font-medium text-muted-foreground">fetch failed</label>
+            <label className="block text-xs font-medium text-muted-foreground">{t("build.launch.preLaunch")}</label>
             <textarea
               value={build.preLaunchCommand ?? ""}
               onChange={e => updateBuild(build.id, { preLaunchCommand: e.target.value })}
-              placeholder={"fetch failed"}
+              placeholder={t("build.launch.preLaunchPlaceholder")}
               rows={3}
               className="w-full resize-y rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary font-mono"
             />
           </div>
 
           <div className="space-y-2">
-            <label className="block text-xs font-medium text-muted-foreground">fetch failed</label>
+            <label className="block text-xs font-medium text-muted-foreground">{t("build.launch.postLaunch")}</label>
             <textarea
               value={build.postLaunchCommand ?? ""}
               onChange={e => updateBuild(build.id, { postLaunchCommand: e.target.value })}
-              placeholder={"fetch failed"}
+              placeholder={t("build.launch.postLaunchPlaceholder")}
               rows={3}
               className="w-full resize-y rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary font-mono"
             />
@@ -66,19 +68,19 @@ fetch failed{" "}
 
       <div className="rounded-3xl border border-border bg-card/40 p-6">
         <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
-          <IconCode className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
-fetch failed
+          <IconCode className="h-5 w-5 text-primary" strokeWidth={1.75} />
+          {t("build.launch.wrapper")}
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-fetch failed(fetch failed<code className="text-foreground">optirun</code>fetch failed{" "}
-          <code className="text-foreground">primusrun</code>fetch failed)fetch failed
+          {t("build.launch.wrapperDescBefore")} <code className="text-foreground">fetch failed</code> {t("build.launch.wrapperDescOr")}{" "}
+          <code className="text-foreground">fetch failed</code> {t("build.launch.wrapperDescAfter")}
         </p>
         <div className="mt-4 space-y-2">
           <input
             type="text"
             value={build.wrapperCommand ?? ""}
             onChange={e => updateBuild(build.id, { wrapperCommand: e.target.value })}
-            placeholder="optirun"
+            placeholder="fetch failed"
             className="h-11 w-full rounded-2xl border border-border bg-muted/40 px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary font-mono"
           />
         </div>
@@ -86,11 +88,11 @@ fetch failed(fetch failed<code className="text-foreground">optirun</code>fetch f
 
       <div className="rounded-3xl border border-border bg-card/40 p-6">
         <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
-          <IconWorldDownload className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
-fetch failed
+          <IconWorldDownload className="h-5 w-5 text-primary" strokeWidth={1.75} />
+          {t("build.launch.env")}
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-fetch failed<code className="text-foreground">KEY=VALUE</code>fetch failed
+          {t("build.launch.envDescBefore")} <code className="text-foreground">fetch failed</code> {t("build.launch.envDescAfter")}
         </p>
         <div className="mt-4 space-y-2">
           <textarea
@@ -101,7 +103,7 @@ fetch failed<code className="text-foreground">KEY=VALUE</code>fetch failed
             className="w-full resize-y rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary font-mono"
           />
           <p className="text-xs text-muted-foreground">
-fetch failed{Object.keys(parseEnvText(customEnv)).length}
+            {t("build.launch.envCount", { count: Object.keys(parseEnvText(customEnv)).length })}
           </p>
         </div>
       </div>

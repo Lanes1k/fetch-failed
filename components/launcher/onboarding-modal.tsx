@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom"
 import { useEffect, useMemo, useState } from "react"
-import { IconArrowLeft, IconArrowRight, IconCheck, IconLoader2, IconRocket, IconX } from "@tabler/icons-react"
+import { useTranslation } from "react-i18next"
+import { IconArrowLeft, IconArrowRight, IconCheck, IconLoader2, IconPlayerPlay, IconX } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 import { useAccounts } from "@/src/AccountsContext"
 import { changeLanguage } from "@/src/i18n"
@@ -44,6 +45,7 @@ function getAvatarUrl(account: { uuid?: string; type?: string }, username: strin
 
 export function OnboardingModal({ selectedTheme, onSelectTheme, onFinish, onSkip }: OnboardingModalProps) {
   const { accounts, addAccount, activeAccount, setActiveAccount } = useAccounts()
+  const { t } = useTranslation()
   const [mounted, setMounted] = useState(false)
   const [stepIndex, setStepIndex] = useState(0)
   const [selectedLanguage, setSelectedLanguage] = useState<OnboardingLanguage>(() => {
@@ -105,8 +107,8 @@ export function OnboardingModal({ selectedTheme, onSelectTheme, onFinish, onSkip
   const anyLoginLoading = elyByLoading || xnSkinsLoading || microsoftLoading
   const isLastStep = stepIndex === steps.length - 1
   const currentStep = steps[stepIndex]
-  const STEP_ICONS = [IconRocket, IconRocket, IconRocket, IconRocket, IconRocket]
-  const CurrentStepIcon = STEP_ICONS[stepIndex] ?? IconRocket
+  const STEP_ICONS = [IconPlayerPlay, IconPlayerPlay, IconPlayerPlay, IconPlayerPlay, IconPlayerPlay]
+  const CurrentStepIcon = STEP_ICONS[stepIndex] ?? IconPlayerPlay
 
   const canProceed = useMemo(() => {
     if (stepIndex === 0) return Boolean(selectedLanguage)
@@ -130,6 +132,7 @@ export function OnboardingModal({ selectedTheme, onSelectTheme, onFinish, onSkip
   const persistTheme = (themeId: string) => {
     onSelectTheme(themeId)
     localStorage.setItem("theme", themeId)
+    window.electronAPI?.setSetting("theme", themeId)
     const theme = presetThemes.find((t) => t.id === themeId)
     if (theme) applyTheme(theme)
     setError("")
@@ -229,7 +232,7 @@ export function OnboardingModal({ selectedTheme, onSelectTheme, onFinish, onSkip
                 <CurrentStepIcon className="h-5 w-5" strokeWidth={1.8} />
               </div>
               <div className="min-w-0">
-                <h2 className="text-xl font-semibold text-foreground">fetch failed</h2>
+                <h2 className="text-xl font-semibold text-foreground">{t("onboarding.initialSetup")}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">{currentStep.description}</p>
               </div>
             </div>
@@ -244,7 +247,7 @@ export function OnboardingModal({ selectedTheme, onSelectTheme, onFinish, onSkip
           </div>
           <div className="mt-3 flex items-center justify-between gap-3">
             <div className="text-sm text-muted-foreground">
-fetch failed{stepIndex + 1}fetch failed{steps.length}
+              {t("onboarding.step", { current: stepIndex + 1, total: steps.length })}
             </div>
           </div>
           <div className="mt-4">

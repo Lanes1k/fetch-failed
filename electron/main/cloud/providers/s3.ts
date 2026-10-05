@@ -1,8 +1,9 @@
+import { toErrorMessage, opFailure } from "../../errors"
 import fs from "fs/promises"
 import path from "path"
 import crypto from "crypto"
 import type { CloudProvider, CloudAuthResult, CloudFileListResult, CloudUploadResult, CloudDownloadResult, CloudStorageQuota, CloudFileInfo } from "../provider"
-import { dbHelpers } from "../../../db"
+import { readCloudToken, writeCloudToken, clearCloudToken } from "../token-store"
 import { fetchWithRetry } from "@xnlc/core/retry"
 
 const BASE_PREFIX = "xneon-launcher/"
@@ -20,15 +21,13 @@ let cachedConfig: S3Config | null = null
 
 async function readConfig(): Promise<S3Config | null> {
   if (cachedConfig) return cachedConfig
-  try {
-    const raw = await dbHelpers.getCloudConfig("s3")
-    if (raw) { cachedConfig = JSON.parse(raw) as S3Config; return cachedConfig }
-  } catch { /* noop */ }
-  return null
+  const config = await readCloudToken<S3Config>("s3")
+  if (config) cachedConfig = config
+  return config
 }
 
 async function writeConfig(config: S3Config): Promise<void> {
-  await dbHelpers.setCloudConfig("s3", JSON.stringify(config))
+  await writeCloudToken("s3", config)
   cachedConfig = config
 }
 
@@ -72,7 +71,7 @@ function getSignatureHeaders(
   const kSigning = hmac(kService, "aws4_request")
   const signature = hmac(kSigning, stringToSign).toString("hex")
 
-  const authHeader = `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeadersList.join(";")}, Signature=${signature}`
+  const authHeader = `fetch failed${config.accessKeyId}/${credentialScope}fetch failed${signedHeadersList.join(";")}fetch failed${signature}`
 
   return {
     Host: host,
@@ -182,12 +181,12 @@ export class S3Provider implements CloudProvider {
       const signedHeaders = getSignatureHeaders(config, "GET", url, {}, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
       const res = await fetch(url, { headers: signedHeaders })
       if (!res.ok && res.status !== 404) {
-        return { success: false, error: `fetch failed` }
+        return { success: false, error: `fetch failed${res.status} ${res.statusText}` }
       }
       await writeConfig(config)
       return { success: true, provider: "s3" }
     } catch (e) {
-      return { success: false, error: `fetch failed` }
+      return { success: false, error: `fetch failed${toErrorMessage(e)}` }
     }
   }
 
@@ -197,7 +196,7 @@ export class S3Provider implements CloudProvider {
   }
 
   async logout(): Promise<void> {
-    try { await dbHelpers.removeCloudConfig("s3") } catch { /* noop */ }
+    await clearCloudToken("s3")
     cachedConfig = null
   }
 
@@ -219,7 +218,7 @@ export class S3Provider implements CloudProvider {
       const prefix = folderPath ? `${BASE_PREFIX}${folderPath}/` : BASE_PREFIX
       const files = await listS3Files(config, prefix)
       return { success: true, files }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async uploadFile(localPath: string, remotePath: string, onProgress?: (percent: number) => void): Promise<CloudUploadResult> {
@@ -231,10 +230,10 @@ export class S3Provider implements CloudProvider {
       const url = s3Url(config, key)
       onProgress?.(50)
       const res = await s3Request(config, "PUT", url, body, onProgress)
-      if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`)
+      if (!res.ok) throw new Error(`fetch failed${res.status} ${res.statusText}`)
       onProgress?.(100)
       return { success: true, id: key, name: path.basename(remotePath) }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async downloadFile(remotePath: string, localPath: string): Promise<CloudDownloadResult> {
@@ -245,12 +244,12 @@ export class S3Provider implements CloudProvider {
       const url = s3Url(config, key)
       const signedHeaders = getSignatureHeaders(config, "GET", url, {}, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
       const res = await fetchWithRetry(url, { headers: signedHeaders })
-      if (!res.ok) throw new Error(`Download failed: ${res.status} ${res.statusText}`)
+      if (!res.ok) throw new Error(`fetch failed${res.status} ${res.statusText}`)
       const buffer = Buffer.from(await res.arrayBuffer())
       await fs.mkdir(path.dirname(localPath), { recursive: true })
       await fs.writeFile(localPath, buffer)
       return { success: true, localPath }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async deleteFile(remotePath: string): Promise<{ success: boolean; error?: string }> {
@@ -260,9 +259,9 @@ export class S3Provider implements CloudProvider {
       const key = `${BASE_PREFIX}${remotePath}`
       const url = s3Url(config, key)
       const res = await s3Request(config, "DELETE", url)
-      if (!res.ok) throw new Error(`Delete failed: ${res.status}`)
+      if (!res.ok) throw new Error(`fetch failed${res.status}`)
       return { success: true }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async getStorageQuota(): Promise<CloudStorageQuota | null> {

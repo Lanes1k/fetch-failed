@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
+import { parseMotd } from "@/lib/minecraft-motd"
+import { ModalLayer } from "@/components/ui/modal-layer"
 import {
   IconChevronDown,
   IconChevronUp,
@@ -48,251 +50,10 @@ interface InstanceServersTabProps {
 
 async function fetchServerStatus(ip: string): Promise<ServerStatus> {
   const api = window.electronAPI
-  if (!api?.pingServer) throw new Error("Ping API unavailable")
+  if (!api?.pingServer) throw new Error("fetch failed")
   const result = await api.pingServer(ip)
   if (!result.online && result.error) throw new Error(result.error)
   return result
-}
-
-const COLOR_MAP: Record<string, string> = {
-  "0": "#000000",
-  "1": "#0000AA",
-  "2": "#00AA00",
-  "3": "#00AAAA",
-  "4": "#AA0000",
-  "5": "#AA00AA",
-  "6": "#FFAA00",
-  "7": "#AAAAAA",
-  "8": "#555555",
-  "9": "#5555FF",
-  a: "#55FF55",
-  b: "#55FFFF",
-  c: "#FF5555",
-  d: "#FF55FF",
-  e: "#FFFF55",
-  f: "#FFFFFF",
-  black: "#000000",
-  dark_blue: "#0000AA",
-  dark_green: "#00AA00",
-  dark_aqua: "#00AAAA",
-  dark_red: "#AA0000",
-  dark_purple: "#AA00AA",
-  gold: "#FFAA00",
-  gray: "#AAAAAA",
-  dark_gray: "#555555",
-  blue: "#5555FF",
-  green: "#55FF55",
-  aqua: "#55FFFF",
-  red: "#FF5555",
-  light_purple: "#FF55FF",
-  yellow: "#FFFF55",
-  white: "#FFFFFF",
-}
-
-const FORMATTING_MAP: Record<string, string> = {
-  l: "font-weight:bold",
-  m: "text-decoration:line-through",
-  n: "text-decoration:underline",
-  o: "font-style:italic",
-}
-
-interface MotdExtraEntry {
-  text?: string
-  extra?: Array<MotdExtraEntry | string>
-  color?: string
-  bold?: boolean
-  italic?: boolean
-  underlined?: boolean
-  strikethrough?: boolean
-}
-
-function resolveMinecraftColor(color: string | undefined, fallback: string) {
-  if (!color) return fallback
-  if (color.startsWith("#")) return color
-  return COLOR_MAP[color.toLowerCase()] || fallback
-}
-
-function renderExtraEntry(
-  entry: MotdExtraEntry | string,
-  inheritedColor: string,
-  inheritedBold: boolean,
-  inheritedItalic: boolean,
-  inheritedUnderline: boolean,
-  inheritedStrikethrough: boolean,
-  keyPrefix: string,
-  keyIdx: number
-): ReactNode {
-  if (typeof entry === "string") {
-    if (entry === "\n") return <br key={`${keyPrefix}-br-${keyIdx}`} />
-    return (
-      <span
-        key={`${keyPrefix}-${keyIdx}`}
-        style={{
-          color: inheritedColor,
-          fontWeight: inheritedBold ? "bold" : "normal",
-          fontStyle: inheritedItalic ? "italic" : "normal",
-          textDecoration: [
-            inheritedUnderline ? "underline" : "",
-            inheritedStrikethrough ? "line-through" : "",
-          ]
-            .filter(Boolean)
-            .join(" ") || "none",
-          textShadow: inheritedBold ? `0 0 2px ${inheritedColor}40, 0 0 6px ${inheritedColor}20` : "none",
-        }}
-      >
-        {entry}
-      </span>
-    )
-  }
-
-  if (entry.text === "\n") {
-    return <br key={`${keyPrefix}-br-${keyIdx}`} />
-  }
-
-  const color = resolveMinecraftColor(entry.color, inheritedColor)
-  const bold = entry.bold !== undefined ? entry.bold : inheritedBold
-  const italic = entry.italic !== undefined ? entry.italic : inheritedItalic
-  const underline = entry.underlined !== undefined ? entry.underlined : inheritedUnderline
-  const strikethrough = entry.strikethrough !== undefined ? entry.strikethrough : inheritedStrikethrough
-
-  const children: ReactNode[] = []
-
-  if (entry.text && entry.text !== "\n") {
-    children.push(
-      <span
-        key={`${keyPrefix}-${keyIdx}`}
-        style={{
-          color,
-          fontWeight: bold ? "bold" : "normal",
-          fontStyle: italic ? "italic" : "normal",
-          textDecoration: [underline ? "underline" : "", strikethrough ? "line-through" : ""]
-            .filter(Boolean)
-            .join(" ") || "none",
-          textShadow: bold ? `0 0 2px ${color}40, 0 0 6px ${color}20` : "none",
-        }}
-      >
-        {entry.text}
-      </span>
-    )
-  }
-
-  if (entry.extra) {
-    entry.extra.forEach((child, childIdx) => {
-      children.push(
-        renderExtraEntry(child, color, bold, italic, underline, strikethrough, `${keyPrefix}-${keyIdx}`, childIdx)
-      )
-    })
-  }
-
-  return <span key={`${keyPrefix}-wrap-${keyIdx}`}>{children}</span>
-}
-
-function parseMotd(raw: string): ReactNode[] {
-  if (!raw) return []
-
-  try {
-    const parsed = JSON.parse(raw) as MotdExtraEntry | MotdExtraEntry[]
-
-    if (Array.isArray(parsed)) {
-      return [
-        <div key="motd-json-array" className="leading-tight text-xs whitespace-pre-wrap break-words">
-          {parsed.map((entry, idx) =>
-            renderExtraEntry(entry, "#AAAAAA", false, false, false, false, "motd-array", idx)
-          )}
-        </div>,
-      ]
-    }
-
-    if (parsed && typeof parsed === "object") {
-      if (parsed.text && /\u00A7[0-9a-fk-or]/i.test(parsed.text)) {
-        return parseMotd(parsed.text)
-      }
-      const entries: Array<MotdExtraEntry | string> = []
-      if (parsed.text) entries.push({ text: parsed.text, color: parsed.color, bold: parsed.bold, italic: parsed.italic, underlined: parsed.underlined, strikethrough: parsed.strikethrough })
-      if (parsed.extra) entries.push(...parsed.extra)
-
-      return [
-        <div key="motd-json-object" className="leading-tight text-xs whitespace-pre-wrap break-words">
-          {entries.map((entry, idx) =>
-            renderExtraEntry(entry, "#AAAAAA", false, false, false, false, "motd-object", idx)
-          )}
-        </div>,
-      ]
-    }
-  } catch {
-    // Not JSON, fall back to legacy parsing
-  }
-
-  const lines = raw.split(/\r?\n/)
-  return lines.map((line, lineIdx) => {
-    const parts = line.split(/\u00A7([0-9a-fk-or])/gi)
-    const rendered: React.ReactNode[] = []
-    let color = "#AAAAAA"
-    let bold = false
-    let italic = false
-    let underline = false
-    let strikethrough = false
-
-    for (let i = 0; i < parts.length; i++) {
-      const segment = parts[i]
-      if (i % 2 === 1) {
-        const code = segment.toLowerCase()
-        if (code === "r") {
-          color = "#AAAAAA"
-          bold = false
-          italic = false
-          underline = false
-          strikethrough = false
-        } else if (COLOR_MAP[code]) {
-          color = COLOR_MAP[code]
-          bold = false
-          italic = false
-          underline = false
-          strikethrough = false
-        } else {
-          const style = FORMATTING_MAP[code]
-          if (style) {
-            if (style.includes("bold")) bold = true
-            if (style.includes("italic")) italic = true
-            if (style.includes("underline")) underline = true
-            if (style.includes("line-through")) strikethrough = true
-          }
-        }
-      } else if (segment) {
-        const styleObj: React.CSSProperties = {
-          color,
-          fontWeight: bold ? "bold" : "normal",
-          fontStyle: italic ? "italic" : "normal",
-          textShadow:
-            bold
-              ? `0 0 2px ${color}40, 0 0 6px ${color}20`
-              : "none",
-        }
-        const decoration = [
-          underline ? "underline" : "",
-          strikethrough ? "line-through" : "",
-        ]
-          .filter(Boolean)
-          .join(" ")
-        if (decoration) styleObj.textDecoration = decoration
-
-        rendered.push(
-          <span
-            key={`${lineIdx}-${i}`}
-            style={styleObj}
-          >
-            {segment}
-          </span>
-        )
-      }
-    }
-
-    return (
-      <div key={lineIdx} className="leading-tight text-xs whitespace-pre-wrap break-words">
-        {rendered}
-      </div>
-    )
-  })
 }
 
 export function InstanceServersTab({ build, updateBuild }: InstanceServersTabProps) {
@@ -553,11 +314,14 @@ export function InstanceServersTab({ build, updateBuild }: InstanceServersTabPro
                   <span className="text-green-400">{formatPlayers(status?.players_online ?? 0)}</span> /{" "}
                   {formatPlayers(status?.players_max ?? 0)} {t("servers.players", { count: status?.players_online ?? 0 })}
                 </span>
-                <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                <span
+                  className="max-w-[220px] truncate text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground"
+                  title={status?.version ?? undefined}
+                >
                   {status?.version ?? ""}
                 </span>
                 <span className="text-xs font-medium text-green-400">
-                  {latency} ms
+                  {latency} fetch failed
                 </span>
               </div>
             </>
@@ -593,6 +357,7 @@ export function InstanceServersTab({ build, updateBuild }: InstanceServersTabPro
             <button
               onClick={() => void connectToServer(server)}
               disabled={connectingIp === server.ip}
+              title={t("servers.connectHint")}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary/20 hover:bg-primary/30 text-primary text-xs font-medium transition-colors disabled:opacity-50"
             >
               <IconPlugConnected className="w-3.5 h-3.5" strokeWidth={1.75} />
@@ -611,39 +376,38 @@ export function InstanceServersTab({ build, updateBuild }: InstanceServersTabPro
   }
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="relative overflow-hidden rounded-2xl bg-card border border-border">
-        <div className="absolute -top-32 -right-32 w-64 h-64 bg-accent/5 rounded-full blur-3xl" />
-        <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-primary/5 rounded-full blur-3xl" />
+    <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
+      {/* Заголовок вкладки — как в «Мирах» и остальном лаунчере: плоский
+          контейнер с линией-разделителем, без отдельной закруглённой карточки
+          вокруг всей вкладки и без размытых декоративных пятен. */}
+      <div className="flex items-center justify-between border-b border-border pb-2.5 shrink-0 pr-1">
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">{t("servers.title")}</h2>
+          <p className="text-sm text-muted-foreground mt-1">{t("servers.tabSubtitle")}</p>
+          <p className="text-xs text-muted-foreground/70 mt-0.5">
+            {servers.filter((s) => s.status?.online).length} / {servers.length} {t("servers.online")}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => void fetchAll()}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+          >
+            <IconRefresh className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
+            {t("servers.refresh")}
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            <IconPlus className="w-3.5 h-3.5" strokeWidth={1.75} />
+            {t("servers.addServer")}
+          </button>
+        </div>
+      </div>
 
-        <div className="relative z-10 p-4 flex flex-col min-h-full">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">{t("servers.title")}</h2>
-              <p className="text-sm text-muted-foreground mt-1">
-                {servers.filter((s) => s.status?.online).length} / {servers.length} {t("servers.online")}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => void fetchAll()}
-                disabled={refreshing}
-                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors text-sm disabled:opacity-50"
-              >
-                <IconRefresh className={cn("w-4 h-4", refreshing && "animate-spin")} />
-                {t("servers.refresh")}
-              </button>
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-medium transition-all duration-200 shadow-[0_0_15px_var(--glow-primary)]"
-              >
-                <IconPlus className="w-5 h-5" />
-                {t("servers.addServer")}
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 mt-4">
+          <div className="flex items-center gap-3">
             <div className="flex-1 relative">
               <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <input
@@ -656,14 +420,30 @@ export function InstanceServersTab({ build, updateBuild }: InstanceServersTabPro
             </div>
           </div>
 
-          <div className="flex-1 space-y-4 mt-4">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
             {filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-muted/40 flex items-center justify-center mb-4">
-                  <IconServer className="w-7 h-7 text-muted-foreground/40" />
+              // Пустое состояние в том же оформлении, что и вкладка «Миры»:
+              // крупная иконка в цветной плашке, жирный заголовок и действие.
+              <div className="flex h-full flex-col items-center justify-center gap-4 text-center max-w-md mx-auto py-12">
+                <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10 text-primary border border-primary/20">
+                  <IconServer className="h-10 w-10" strokeWidth={1.75} />
                 </div>
-                <p className="text-sm text-muted-foreground">{t("servers.noServers")}</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">{t("servers.noServersDesc")}</p>
+                <div>
+                  <div className="text-xl font-bold text-foreground">{t("servers.noServers")}</div>
+                  <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
+                    {t("servers.noServersDesc")}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2.5 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(true)}
+                    className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm"
+                  >
+                    <IconPlus className="h-4 w-4" strokeWidth={2} />
+                    {t("servers.addServer")}
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -697,17 +477,14 @@ export function InstanceServersTab({ build, updateBuild }: InstanceServersTabPro
               </>
             )}
           </div>
-        </div>
-      </div>
 
       {showAddModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
-          onClick={() => setShowAddModal(false)}
+        <ModalLayer
+          className="bg-background/80 backdrop-blur-sm"
+          onClose={() => setShowAddModal(false)}
         >
           <div
             className="w-full max-w-md mx-4 p-6 rounded-2xl bg-card border border-border shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">{t("servers.addServer")}</h3>
@@ -774,7 +551,7 @@ export function InstanceServersTab({ build, updateBuild }: InstanceServersTabPro
               </div>
             </div>
           </div>
-        </div>
+        </ModalLayer>
       )}
     </div>
   )

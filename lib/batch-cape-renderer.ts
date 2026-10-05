@@ -3,7 +3,10 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     const img = new Image()
     img.crossOrigin = "anonymous"
     img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error(`Failed to load: ${url}`))
+    // Текстуры плащей (textures.minecraft.net) отдаются напрямую с
+    // разрешённым CORS, поэтому внешний CORS-прокси не нужен — раньше он
+    // только добавлял лишний сетевой хоп и тормозил загрузку превью.
+    img.onerror = () => reject(new Error(`fetch failed${url}`))
     img.src = url
   })
 }
@@ -49,10 +52,10 @@ export async function batchRenderCapes(
   capes: Array<{ id: string; url: string }>,
 ): Promise<Map<string, string>> {
   const results = new Map<string, string>()
-  for (const cape of capes) {
-    if (!cape.url) continue
+  const jobs = capes.filter(c => c.url).map(async (cape) => {
     const dataUrl = await renderCape(cape.url)
     if (dataUrl) results.set(cape.id, dataUrl)
-  }
+  })
+  await Promise.allSettled(jobs)
   return results
 }

@@ -28,6 +28,23 @@ export type BuildLaunchParams = {
   defaultAccountId?: string
 }
 
+/** Запуск из карточки быстрой игры: мир (singleplayer) либо адрес сервера. */
+export type QuickPlayLaunchRequest = {
+  type: "singleplayer" | "multiplayer"
+  address: string
+}
+
+/** Превращает запрос быстрой игры в аргументы запуска Minecraft. */
+export function toQuickPlayParams(quickPlay?: QuickPlayLaunchRequest): {
+  quickPlaySingleplayer?: string
+  quickPlayMultiplayer?: string
+} {
+  if (!quickPlay) return {}
+  return quickPlay.type === "singleplayer"
+    ? { quickPlaySingleplayer: quickPlay.address }
+    : { quickPlayMultiplayer: quickPlay.address }
+}
+
 export function saveLastLaunchedPrefs(version: string, modLoader: string, loaderVersion?: string) {
   try {
     localStorage.setItem("xneon-launcher:lastVersion", version)
@@ -117,7 +134,7 @@ export function useBuildLaunch({ account }: { account?: Account }) {
   const { t } = useTranslation()
   const { isRunning, setIsRunning, clearLogs, addLog, launchUi, patchLaunchUi } = useLaunchControls()
 
-  const launchInstance = useCallback(async (build: BuildLaunchParams) => {
+  const launchInstance = useCallback(async (build: BuildLaunchParams, options?: { quickPlay?: QuickPlayLaunchRequest }) => {
     if (!account || !window.electronAPI) return
 
     const settings = await loadLaunchSettings()
@@ -148,6 +165,11 @@ export function useBuildLaunch({ account }: { account?: Account }) {
       : (settings.savedServerPort ?? "")
     const serverEnabled = !!server.trim()
 
+    // Быстрая игра из карточки важнее авто-подключения из настроек/сборки.
+    const quickPlayParams = options?.quickPlay
+      ? toQuickPlayParams(options.quickPlay)
+      : (serverEnabled ? { quickPlayMultiplayer: `${server.trim()}:${serverPort.trim() || "25565"}` } : {})
+
     // Per-build Java override (memory, java path, extra JVM args)
     const useBuildJava = build.javaOverride === true
     const memoryMin = useBuildJava && build.memoryMin ? build.memoryMin : settings.savedMemoryMin || "512M"
@@ -170,7 +192,7 @@ export function useBuildLaunch({ account }: { account?: Account }) {
       currentFileName: null,
     })
     clearLogs()
-    addLog(`fetch failed`)
+    addLog(`fetch failed${build.name} · ${formatLoaderLabel(build.modLoader, build.loaderVersion)} · ${account.username}`)
 
     const result = await window.electronAPI.launchMinecraft({
       version: build.version,
@@ -187,7 +209,7 @@ export function useBuildLaunch({ account }: { account?: Account }) {
       gameDir: intentPath,
       ...(normalizedJavaPath ? { javaPath: normalizedJavaPath } : {}),
       ...(javaArgs ? { javaArgs } : {}),
-      ...(serverEnabled ? { quickPlayMultiplayer: `${server.trim()}:${serverPort.trim() || "25565"}` } : {}),
+      ...quickPlayParams,
       ...(build.preLaunchCommand ? { preLaunchCommand: build.preLaunchCommand } : {}),
       ...(build.postLaunchCommand ? { postLaunchCommand: build.postLaunchCommand } : {}),
       ...(build.wrapperCommand ? { wrapperCommand: build.wrapperCommand } : {}),
@@ -195,12 +217,15 @@ export function useBuildLaunch({ account }: { account?: Account }) {
     })
 
     patchLaunchUi(result.success
-      ? { isLaunching: false, phase: "idle", progress: 100, status: t("launcherStatus.running") }
+      ? { isLaunching: false, phase: "idle", progress: 100, status: t("launcherStatus.starting") }
       : { isLaunching: false, status: result.error ?? "fetch failed" })
-    if (!result.success) addLog(`fetch failed`, "error")
+    if (!result.success) addLog(`fetch failed${result.error ?? "fetch failed"}`, "error")
     if (result.success) {
       setIsRunning(true)
       saveLastLaunchedPrefs(build.name, "instance")
+      const afterLaunch = await window.electronAPI?.getSetting("afterLaunch")
+      if (afterLaunch === "minimize") window.electronAPI?.minimize()
+      else if (afterLaunch === "close") window.electronAPI?.close()
     }
   }, [account, addLog, clearLogs, patchLaunchUi, setIsRunning, t])
 

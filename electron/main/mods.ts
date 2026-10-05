@@ -4,6 +4,11 @@
 // ============================================================
 
 import { ipcMain } from "electron"
+import path from "path"
+import { getBuildIntentPath } from "./builds/helpers"
+import { getLauncherDataRoot } from "./paths"
+import { checkLoaderRequirements, type LoaderRequirementReport } from "./mods-loader-requirements"
+import { inspectJarDependencies, type JarDependencyInspection } from "./mods-jar-deps"
 import type {
   ContentType,
   ModDetails,
@@ -12,6 +17,7 @@ import type {
   ModSearchResponse,
   ModSort,
   ModVersion,
+  ModEnvironment,
 } from "@xnlc/mods" with { "resolution-mode": "import" }
 import type * as ModsApi from "@xnlc/mods" with { "resolution-mode": "import" }
 
@@ -23,7 +29,20 @@ let modsModulePromise: Promise<ModsModule> | null = null
 
 function loadModsModule(): Promise<ModsModule> {
   if (!modsModulePromise) {
-    modsModulePromise = import("@xnlc/mods")
+    modsModulePromise = import("@xnlc/mods").then(async (mods) => {
+      // Каталог FTB — это ~90 запросов манифестов, поэтому кэшируем его и на диске:
+      // иначе после каждого перезапуска лаунчера вкладка FTB ждала бы загрузку заново.
+      try {
+        // Кэш каталога FTB кладём в общую папку данных лаунчера, а не в
+        // `userData` Electron: там он оказывался в стороне от остальных данных
+        // (<appData>/xneon-launcher вместо <appData>/xneonlauncher) и не попадал
+        // ни в «Хранилище», ни в очистку кэша.
+        mods.setFtbCatalogCacheFile(path.join(getLauncherDataRoot(), "cache", "ftb-catalog.json"))
+      } catch {
+        // кэш не критичен
+      }
+      return mods
+    })
   }
   return modsModulePromise
 }
@@ -59,10 +78,11 @@ export function registerModsHandlers(): void {
       sortBy?: ModSort,
       page?: number,
       categories?: string[],
+      environment?: ModEnvironment,
     ): Promise<ModSearchResponse> => {
       try {
         const mods = await loadModsModule()
-        return await mods.modrinthSearch(query, { contentType: contentType ?? "mod", gameVersion, modLoader, categories, sortBy, page }) as ModSearchResponse
+        return await mods.modrinthSearch(query, { contentType: contentType ?? "mod", gameVersion, modLoader, categories, sortBy, page, environment }) as ModSearchResponse
       } catch (err) {
         console.error("Modrinth search error:", err)
         return { results: [], totalCount: 0 }
@@ -98,10 +118,11 @@ export function registerModsHandlers(): void {
       sortBy?: ModSort,
       page?: number,
       categories?: string[],
+      environment?: ModEnvironment,
     ): Promise<ModSearchResponse> => {
       try {
         const mods = await loadModsModule()
-        return await mods.curseforgeSearch(query, { contentType: contentType ?? "mod", gameVersion, modLoader, categories, sortBy, page }) as ModSearchResponse
+        return await mods.curseforgeSearch(query, { contentType: contentType ?? "mod", gameVersion, modLoader, categories, sortBy, page, environment }) as ModSearchResponse
       } catch (err) {
         console.error("CF search error:", err)
         return { results: [], totalCount: 0 }
@@ -125,27 +146,51 @@ export function registerModsHandlers(): void {
     },
   )
 
+
   ipcMain.handle(
-    "mods:curseforge-featured",
-    async (
-      _event,
-      gameVersion?: string,
-    ): Promise<{ popular: ModSearchResponse["results"]; trending: ModSearchResponse["results"] }> => {
+    "mods:curseforge-changelog",
+    async (_event, modId: number, fileId: number): Promise<string> => {
       const mods = await loadModsModule()
-      return await mods.curseforgeFeatured(gameVersion) as { popular: ModSearchResponse["results"]; trending: ModSearchResponse["results"] }
+      return await mods.curseforgeGetChangelog(modId, fileId)
     },
   )
+
+
 
   // ── FTB (Feed The Beast) ──────────────────────────────────
   ipcMain.handle(
     "mods:ftb-search",
-    async (event, query: string, page?: number): Promise<ModSearchResponse> => {
+    async (
+      event,
+      query: string,
+      page?: number,
+      options?: { sortBy?: string; categories?: string[]; gameVersion?: string; loader?: string },
+    ): Promise<ModSearchResponse> => {
       try {
         const mods = await loadModsModule()
-        return await mods.ftbSearch(query, { page: page ?? 0 }) as ModSearchResponse
+        return await mods.ftbSearch(query, {
+          page: page ?? 0,
+          sortBy: options?.sortBy as never,
+          categories: options?.categories,
+          gameVersion: options?.gameVersion,
+          loader: options?.loader,
+        }) as ModSearchResponse
       } catch (err) {
         console.error("FTB search error:", err)
         return { results: [], totalCount: 0 }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    "mods:ftb-catalog-facets",
+    async (): Promise<{ categories: string[]; gameVersions: string[]; loaders: string[] }> => {
+      try {
+        const mods = await loadModsModule()
+        return await mods.ftbCatalogFacets() as { categories: string[]; gameVersions: string[]; loaders: string[] }
+      } catch (err) {
+        console.error("FTB facets error:", err)
+        return { categories: [], gameVersions: [], loaders: [] }
       }
     },
   )
@@ -163,18 +208,6 @@ export function registerModsHandlers(): void {
     },
   )
 
-  ipcMain.handle(
-    "mods:ftb-version",
-    async (event, id: number, versionId: number): Promise<unknown | null> => {
-      try {
-        const mods = await loadModsModule()
-        return await mods.ftbGetModpackVersion(id, versionId)
-      } catch (err) {
-        console.error("FTB version error:", err)
-        return null
-      }
-    },
-  )
 
   ipcMain.handle(
     "mods:ftb-changelog",
@@ -189,6 +222,20 @@ export function registerModsHandlers(): void {
   )
 
   // ── Dependency Resolution ──────────────────────────────────
+  // CurseForge/Modrinth заполняют `dependencies` не у всех файлов: у jei под 26.2
+  // оба API отдают пустой список. Тогда читаем метаданные самого jar.
+  ipcMain.handle(
+    "mods:inspect-jar-dependencies",
+    async (_event, url: string, source: "modrinth" | "curseforge"): Promise<JarDependencyInspection> => {
+      try {
+        return await inspectJarDependencies(url, source)
+      } catch (err) {
+        console.error("[mods] Jar dependency inspection failed:", err)
+        return { modId: null, dependencies: [], declared: [] }
+      }
+    },
+  )
+
   ipcMain.handle(
     "mods:resolve-dependencies",
     async (_event, version: ModVersion, source: "modrinth" | "curseforge"): Promise<ModDependency[]> => {
@@ -197,7 +244,7 @@ export function registerModsHandlers(): void {
         const enriched = await Promise.all(deps.map(async (dep) => {
           if (dep.dependencyType === "incompatible") return null
           if (dep.dependencyType === "embedded") {
-            return { ...dep, name: dep.fileName ?? "Embedded library" } as ModDependency
+            return { ...dep, name: dep.fileName ?? "fetch failed" } as ModDependency
           }
           const info = source === "modrinth"
             ? await fetchMrProjectInfo(dep.projectId)
@@ -214,6 +261,20 @@ export function registerModsHandlers(): void {
       } catch (err) {
         console.error("Dependency resolution error:", err)
         return []
+      }
+    },
+  )
+
+  // ── Требования модов сборки к версии загрузчика ───────────
+  ipcMain.handle(
+    "mods:check-loader-requirements",
+    async (_event, buildName: string, modLoader?: string, loaderVersion?: string): Promise<LoaderRequirementReport> => {
+      try {
+        const modsDir = path.join(getBuildIntentPath(buildName), "mods")
+        return await checkLoaderRequirements(modsDir, modLoader, loaderVersion)
+      } catch (err) {
+        console.error("Loader requirement check error:", err)
+        return { loaderId: modLoader ?? "", loaderVersion, checked: 0, issues: [] }
       }
     },
   )
@@ -243,21 +304,5 @@ export function registerModsHandlers(): void {
     }
   })
 
-  ipcMain.handle("mods:modrinth-loaders", async (): Promise<string[]> => {
-    try {
-      const mods = await loadModsModule()
-      return await mods.modrinthGetLoaders()
-    } catch {
-      return []
-    }
-  })
 
-  ipcMain.handle("mods:modrinth-game-versions", async (): Promise<string[]> => {
-    try {
-      const mods = await loadModsModule()
-      return await mods.modrinthGetGameVersions()
-    } catch {
-      return []
-    }
-  })
 }

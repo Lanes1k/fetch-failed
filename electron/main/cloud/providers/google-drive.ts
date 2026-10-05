@@ -1,15 +1,14 @@
-import { BrowserWindow, shell } from "electron"
-import http from "http"
+import { opFailure } from "../../errors"
+import { BrowserWindow } from "electron"
 import https from "https"
 import { createReadStream } from "fs"
 import { URL } from "url"
 import fs from "fs/promises"
 import path from "path"
 import type { CloudProvider, CloudAuthResult, CloudFileListResult, CloudUploadResult, CloudDownloadResult, CloudStorageQuota, CloudFileInfo } from "../provider"
-import { callbackSuccessPage, callbackErrorPage } from "../callback-page"
 import { getCloudCredentials } from "../credentials"
-import { generatePkcePair } from "../pkce"
-import { dbHelpers } from "../../../db"
+import { readCloudToken, writeCloudToken, clearCloudToken } from "../token-store"
+import { runOAuthLoopback } from "../oauth-loopback"
 import { fetchWithRetry } from "@xnlc/core/retry"
 
 const credentials = getCloudCredentials()
@@ -20,8 +19,8 @@ const GOOGLE_REDIRECT_URI = `http://localhost:${GOOGLE_REDIRECT_PORT}/callback`
 const GOOGLE_SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appdata"
 const GOOGLE_API = "https://www.googleapis.com/drive/v3"
 const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3"
-const BASE_FOLDER = "Xneon Launcher"
-const SUB_FOLDERS = ["builds", "accounts"]
+const BASE_FOLDER = "fetch failed"
+const SUB_FOLDERS = ["builds", "accounts", "servers"]
 
 type TokenData = {
   access_token: string
@@ -35,22 +34,15 @@ function isValidToken(data: TokenData | null): data is TokenData {
   return !!data.access_token
 }
 
+/** Токен и его обновление — в общем хранилище (см. token-store.ts). */
 async function readToken(): Promise<TokenData | null> {
-  try {
-    const raw = await dbHelpers.getCloudConfig("google-drive")
-    const data = JSON.parse(raw ?? "null") as TokenData
-    if (isValidToken(data)) return data
-  } catch { /* noop */ }
-  return null
+  const data = await readCloudToken<TokenData>("google-drive")
+  return isValidToken(data) ? data : null
 }
-
-async function writeToken(data: TokenData): Promise<void> {
-  const raw = JSON.stringify(data)
-  await dbHelpers.setCloudConfig("google-drive", raw)
-}
+const writeToken = (data: TokenData) => writeCloudToken("google-drive", data)
 
 async function refreshAccessToken(token: TokenData): Promise<TokenData> {
-  if (!token.refresh_token) throw new Error("No refresh token")
+  if (!token.refresh_token) throw new Error("fetch failed")
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -61,7 +53,7 @@ async function refreshAccessToken(token: TokenData): Promise<TokenData> {
       refresh_token: token.refresh_token,
     }),
   })
-  if (!res.ok) throw new Error(`Refresh failed: ${res.status}`)
+  if (!res.ok) throw new Error(`fetch failed${res.status}`)
   const data = await res.json() as { access_token: string; expires_in: number }
   const updated: TokenData = {
     access_token: data.access_token,
@@ -152,83 +144,66 @@ async function getFolderId(token: string, folderPath: string): Promise<string | 
 
 export class GoogleDriveProvider implements CloudProvider {
   readonly id = "google-drive" as const
-  readonly name = "Google Drive"
+  readonly name = "fetch failed"
 
   async authenticate(): Promise<CloudAuthResult> {
-    return new Promise((resolve) => {
-      const { verifier, challenge } = generatePkcePair()
-      const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth")
-      authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID)
-      authUrl.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI)
-      authUrl.searchParams.set("response_type", "code")
-      authUrl.searchParams.set("scope", GOOGLE_SCOPES)
-      authUrl.searchParams.set("access_type", "offline")
-      authUrl.searchParams.set("prompt", "consent")
-      authUrl.searchParams.set("code_challenge", challenge)
-      authUrl.searchParams.set("code_challenge_method", "S256")
-
-      const server = http.createServer(async (req, res) => {
-        const url = new URL(req.url || "/", `http://localhost:${GOOGLE_REDIRECT_PORT}`)
-        const code = url.searchParams.get("code")
-        if (!code) {
-          res.writeHead(400)
-          res.end("No code")
-          return
-        }
-
-        try {
-          const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-              code,
-              client_id: GOOGLE_CLIENT_ID,
-              client_secret: GOOGLE_CLIENT_SECRET,
-              grant_type: "authorization_code",
-              redirect_uri: GOOGLE_REDIRECT_URI,
-              code_verifier: verifier,
-            }),
-          })
-          if (!tokenRes.ok) throw new Error("Token exchange failed")
-          const data = await tokenRes.json() as { access_token: string; refresh_token: string; expires_in: number }
-          await writeToken({
-            access_token: data.access_token,
-            refresh_token: data.refresh_token,
-            expires_at: Date.now() + data.expires_in * 1000,
-          })
-
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
-          res.end(callbackSuccessPage("Google Drive"))
-          server.close()
-          resolve({ success: true, provider: "google-drive" })
-        } catch (e) {
-          res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" })
-          res.end(callbackErrorPage("Google Drive", e instanceof Error ? e.message : String(e)))
-          server.close()
-          resolve({ success: false, error: e instanceof Error ? e.message : String(e) })
-        }
-      })
-
-      server.listen(GOOGLE_REDIRECT_PORT, () => {
-        shell.openExternal(authUrl.toString())
-      })
-
-      setTimeout(() => { server.close(); resolve({ success: false, error: "Timeout" }) }, 120000)
+    // Общий loopback-каркас (см. oauth-loopback.ts): сервер, таймер, страницы
+    // ответа и закрытие — в одном месте, провайдер отдаёт только свои параметры.
+    return runOAuthLoopback({
+      providerLabel: "fetch failed",
+      providerId: "google-drive",
+      port: GOOGLE_REDIRECT_PORT,
+      buildAuthUrl: ({ challenge }) => {
+        const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth")
+        authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID)
+        authUrl.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI)
+        authUrl.searchParams.set("response_type", "code")
+        authUrl.searchParams.set("scope", GOOGLE_SCOPES)
+        authUrl.searchParams.set("access_type", "offline")
+        authUrl.searchParams.set("prompt", "consent")
+        authUrl.searchParams.set("code_challenge", challenge)
+        authUrl.searchParams.set("code_challenge_method", "S256")
+        return authUrl.toString()
+      },
+      exchange: async (code, verifier) => {
+        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            code,
+            client_id: GOOGLE_CLIENT_ID,
+            client_secret: GOOGLE_CLIENT_SECRET,
+            grant_type: "authorization_code",
+            redirect_uri: GOOGLE_REDIRECT_URI,
+            code_verifier: verifier,
+          }),
+        })
+        if (!tokenRes.ok) throw new Error("fetch failed")
+        const data = await tokenRes.json() as { access_token: string; refresh_token: string; expires_in: number }
+        await writeToken({
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          expires_at: Date.now() + data.expires_in * 1000,
+        })
+      },
     })
   }
 
   async isAuthenticated(): Promise<boolean> {
-    const token = await getValidToken()
+    // Быстрая локальная проверка: сохранённый валидный токен => подключён.
+    // Refresh токена выполняется лениво при реальных операциях, чтобы не
+    // блокировать рендер страницы Cloud сетевым запросом.
+    const token = await readToken()
     return token !== null
   }
 
   async logout(): Promise<void> {
-    try { await dbHelpers.removeCloudConfig("google-drive") } catch { /* noop */ }
+    await clearCloudToken("google-drive")
   }
 
   async ensureBaseFolder(): Promise<void> {
     const token = await getValidToken()
-    if (!token) throw new Error("Not authenticated")
+    if (!token) throw new Error("fetch failed")
     const baseId = await findOrCreateBaseFolder(token)
     for (const sub of SUB_FOLDERS) {
       await createFolderIfNotExists(token, sub, baseId)
@@ -237,7 +212,7 @@ export class GoogleDriveProvider implements CloudProvider {
 
   async listFiles(folderPath?: string): Promise<CloudFileListResult> {
     const token = await getValidToken()
-    if (!token) return { success: false, error: "Not authenticated" }
+    if (!token) return { success: false, error: "fetch failed" }
     try {
       const baseId = await findOrCreateBaseFolder(token)
       let parentId = baseId
@@ -262,13 +237,13 @@ export class GoogleDriveProvider implements CloudProvider {
       }))
       return { success: true, files }
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
+      return opFailure(e)
     }
   }
 
   async uploadFile(localPath: string, remotePath: string, onProgress?: (percent: number) => void): Promise<CloudUploadResult> {
     const token = await getValidToken()
-    if (!token) return { success: false, error: "Not authenticated" }
+    if (!token) return { success: false, error: "fetch failed" }
     try {
       const fileStats = await fs.stat(localPath)
       const fileName = path.basename(localPath)
@@ -319,17 +294,17 @@ export class GoogleDriveProvider implements CloudProvider {
         })
         stream.pipe(request, { end: false })
       })
-      if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+      if (!res.ok) throw new Error(`fetch failed${res.status}`)
       const created = await res.json() as { id: string; name: string }
       return { success: true, id: created.id, name: created.name }
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
+      return opFailure(e)
     }
   }
 
   async downloadFile(remotePath: string, localPath: string): Promise<CloudDownloadResult> {
     const token = await getValidToken()
-    if (!token) return { success: false, error: "Not authenticated" }
+    if (!token) return { success: false, error: "fetch failed" }
     try {
       const fileName = path.basename(remotePath)
       const dirParts = remotePath.split("/").slice(0, -1).filter(Boolean)
@@ -341,7 +316,7 @@ export class GoogleDriveProvider implements CloudProvider {
           token
         )
         const data = await res.json() as { files: { id: string }[] }
-        if (data.files.length === 0) return { success: false, error: `Folder not found: ${part}` }
+        if (data.files.length === 0) return { success: false, error: `fetch failed${part}` }
         parentId = data.files[0].id
       }
       const findRes = await googleFetch(
@@ -349,23 +324,23 @@ export class GoogleDriveProvider implements CloudProvider {
         token
       )
       const findData = await findRes.json() as { files: { id: string }[] }
-      if (findData.files.length === 0) return { success: false, error: "File not found" }
+      if (findData.files.length === 0) return { success: false, error: "fetch failed" }
       const fileId = findData.files[0].id
 
       const dlRes = await googleFetch(`${GOOGLE_API}/files/${fileId}?alt=media`, token)
-      if (!dlRes.ok) throw new Error(`Download failed: ${dlRes.status}`)
+      if (!dlRes.ok) throw new Error(`fetch failed${dlRes.status}`)
       const arrayBuffer = await dlRes.arrayBuffer()
       await fs.mkdir(path.dirname(localPath), { recursive: true })
       await fs.writeFile(localPath, Buffer.from(arrayBuffer))
       return { success: true, localPath }
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
+      return opFailure(e)
     }
   }
 
   async deleteFile(remotePath: string): Promise<{ success: boolean; error?: string }> {
     const token = await getValidToken()
-    if (!token) return { success: false, error: "Not authenticated" }
+    if (!token) return { success: false, error: "fetch failed" }
     try {
       const parts = remotePath.split("/").filter(Boolean)
       const fileName = parts.pop()!
@@ -377,7 +352,7 @@ export class GoogleDriveProvider implements CloudProvider {
           token
         )
         const data = await res.json() as { files: { id: string }[] }
-        if (data.files.length === 0) return { success: false, error: `Folder not found: ${part}` }
+        if (data.files.length === 0) return { success: false, error: `fetch failed${part}` }
         parentId = data.files[0].id
       }
       const findRes = await googleFetch(
@@ -385,11 +360,11 @@ export class GoogleDriveProvider implements CloudProvider {
         token
       )
       const findData = await findRes.json() as { files: { id: string }[] }
-      if (findData.files.length === 0) return { success: false, error: "File not found" }
+      if (findData.files.length === 0) return { success: false, error: "fetch failed" }
       await googleFetch(`${GOOGLE_API}/files/${findData.files[0].id}`, token, { method: "DELETE" })
       return { success: true }
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
+      return opFailure(e)
     }
   }
 

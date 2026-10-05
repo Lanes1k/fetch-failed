@@ -143,6 +143,8 @@ export interface VersionJson {
   arguments?: VersionJsonArguments;
   libraries: VersionJsonLibrary[];
   jarMods?: VersionJsonLibrary[];
+  /** Ревизия сгенерированного нами профиля загрузчика: если в кэше старее — профиль пересобирается. */
+  xnlcProfileRevision?: number;
   mods?: VersionJsonLibrary[];
   mavenFiles?: VersionJsonLibrary[];
   agents?: VersionJsonLibrary[];
@@ -153,7 +155,6 @@ export interface VersionJson {
   javaVersion?: VersionJsonJavaVersion;
   logging?: VersionJsonLogging;
   minimumLauncherVersion?: number;
-  tlauncherVersion?: number;
   complianceLevel?: number;
   releaseType?: string;
   xnlcBaseVersion?: string;

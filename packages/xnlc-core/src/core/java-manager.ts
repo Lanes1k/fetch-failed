@@ -203,18 +203,18 @@ export class JavaManager {
     // 1. Fetch all.json to get component manifest URL
     const allRes = await fetch(MOJANG_RUNTIME_MANIFEST);
     if (!allRes.ok) {
-      throw new Error(`Failed to fetch Java runtime manifest: HTTP ${allRes.status}`);
+      throw new Error(`fetch failed${allRes.status}`);
     }
     const allManifest = await allRes.json() as MojangAllManifest;
 
     const platformEntries = allManifest[platformKey];
     if (!platformEntries) {
-      throw new Error(`No Java runtime entries for platform ${platformKey}`);
+      throw new Error(`fetch failed${platformKey}`);
     }
 
     const componentEntries = platformEntries[component];
     if (!componentEntries || componentEntries.length === 0) {
-      throw new Error(`No Java runtime entries for ${platformKey}/${component}`);
+      throw new Error(`fetch failed${platformKey}/${component}`);
     }
 
     // Pick the latest entry
@@ -227,7 +227,7 @@ export class JavaManager {
     // 2. Fetch component manifest
     const manifestRes = await fetch(latestEntry.manifest.url);
     if (!manifestRes.ok) {
-      throw new Error(`Failed to fetch component manifest: HTTP ${manifestRes.status}`);
+      throw new Error(`fetch failed${manifestRes.status}`);
     }
     const manifest = await manifestRes.json() as MojangManifest;
 
@@ -253,21 +253,37 @@ export class JavaManager {
     }
 
     if (fileEntries.length === 0) {
-      throw new Error(`No downloadable files in manifest for ${platformKey}/${component}`);
+      throw new Error(`fetch failed${platformKey}/${component}`);
     }
 
-    let downloadedBytes = 0;
+    // Прогресс считается по сумме скачанных байт всех файлов рантайма: у задач
+    // есть только собственный `downloaded`, поэтому агрегируем их статусы.
+    // Раньше здесь стояла заглушка, из-за которой полоса загрузки Java в
+    // лаунчере не двигалась вообще.
+    const tasks = job["tasks"] as DownloadTask[];
+    let lastPercent = -1;
+    const reportProgress = () => {
+      if (!onProgress || totalBytes <= 0) return;
+      const downloadedBytes = tasks.reduce((sum, task) => sum + (task.status?.downloaded ?? 0), 0);
+      const percent = Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)));
+      if (percent === lastPercent) return;
+      lastPercent = percent;
+      onProgress(percent);
+    }
+
     if (onProgress) {
-      for (const task of job["tasks"] as DownloadTask[]) {
+      for (const task of tasks) {
         const originalOnProgress = task.options.onProgress;
         task.options.onProgress = (p) => {
           if (originalOnProgress) originalOnProgress(p);
-          downloadedBytes += (p.downloaded ?? 0) - (p.total ?? 0) > 0 ? 0 : 0; // placeholder
+          reportProgress();
         };
       }
+      reportProgress();
     }
 
     await job.execute();
+    onProgress?.(100);
 
     // Set executable flags on unix
     if (os.platform() !== "win32") {
@@ -284,7 +300,7 @@ export class JavaManager {
     // 4. Find java binary
     const javaPath = this.findJavaBinary(runtimeDir);
     if (!javaPath) {
-      throw new Error(`Could not find java binary in Mojang runtime ${platformKey}/${component}`);
+      throw new Error(`fetch failed${platformKey}/${component}`);
     }
 
     const detectedVersion = this.detectJavaVersion(javaPath);
@@ -305,8 +321,8 @@ export class JavaManager {
 
     if (!downloadUrl) {
       throw new Error(
-        `Could not find Java ${version} for ${osInfo.os}-${osInfo.arch}. ` +
-        `Please install Java ${version}+ manually and set --java-path.`,
+        `fetch failed${version} for ${osInfo.os}-${osInfo.arch}. ` +
+        `fetch failed${version}fetch failed`,
       );
     }
 
@@ -328,7 +344,7 @@ export class JavaManager {
 
     const javaPath = this.findJavaBinary(runtimeDir);
     if (!javaPath) {
-      throw new Error(`Could not find java binary in extracted runtime`);
+      throw new Error(`fetch failed`);
     }
 
     if (os.platform() !== "win32") {
@@ -388,7 +404,7 @@ export class JavaManager {
         shell: false,
       });
       if (result.status !== 0) {
-        throw new Error(`Failed to extract archive: ${archivePath}`);
+        throw new Error(`fetch failed${archivePath}`);
       }
     } else if (archivePath.endsWith(".zip")) {
       const AdmZip = (await import("adm-zip/adm-zip.js")).default;
@@ -404,7 +420,7 @@ export class JavaManager {
         fs.rmdirSync(nestedDir);
       }
     } else {
-      throw new Error(`Unsupported archive format: ${archivePath}`);
+      throw new Error(`fetch failed${archivePath}`);
     }
   }
 

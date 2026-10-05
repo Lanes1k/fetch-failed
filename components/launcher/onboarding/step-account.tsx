@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { IconCheck, IconLoader2, IconUserMinus, IconArrowLeft } from "@tabler/icons-react"
 import { MicrosoftIcon, ElyByIcon, XnSkinsIcon } from "./icons"
@@ -24,31 +25,31 @@ type Account = {
 
 type ProviderId = "microsoft" | "elyby" | "xnskins"
 
-const PROVIDERS: { id: ProviderId; title: string; description: string; color: string; methodOAuthDesc: string; methodDeviceDesc: string }[] = [
+// Описания провайдеров берём из i18n: заголовки — имена сервисов, они одинаковы
+// во всех языках, а пояснения к ним переводятся (те же ключи, что в разделе аккаунтов).
+const PROVIDERS: { id: ProviderId; title: string; descriptionKey: string; color: string; siteName: string }[] = [
   {
-    id: "microsoft", title: "Microsoft",
-    description: "Official Mojang / Microsoft sign-in.",
+    id: "microsoft", title: "fetch failed",
+    descriptionKey: "accounts.microsoftDesc",
     color: "#2563EB",
-    methodOAuthDesc: "fetch failed",
-    methodDeviceDesc: "fetch failed",
+    siteName: "Microsoft",
   },
   {
-    id: "elyby", title: "Ely.By",
-    description: "Sign in with an Ely.By account.",
+    id: "elyby", title: "fetch failed",
+    descriptionKey: "accounts.elyByDesc",
     color: "#217e5c",
-    methodOAuthDesc: "fetch failed",
-    methodDeviceDesc: "fetch failed",
+    siteName: "Ely.by",
   },
   {
-    id: "xnskins", title: "XN Skins",
-    description: "Sign in with XN Skins support.",
+    id: "xnskins", title: "fetch failed",
+    descriptionKey: "accounts.xneonSkinsDesc",
     color: "#f97316",
-    methodOAuthDesc: "fetch failed",
-    methodDeviceDesc: "fetch failed",
+    siteName: "fetch failed",
   },
 ]
 
 export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, setActiveAccount, onProviderLogin, onOpenOffline }: StepAccountProps) {
+  const { t } = useTranslation()
   const [chosenProvider, setChosenProvider] = useState<ProviderId | null>(null)
   const [authLoading, setAuthLoading] = useState(false)
   const [authError, setAuthError] = useState("")
@@ -61,18 +62,10 @@ export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, set
   const [devicePolling, setDevicePolling] = useState(false)
   const [deviceStatus, setDeviceStatus] = useState<"waiting" | "expired" | "done">("waiting")
   const [copied, setCopied] = useState(false)
-  const cleanupRef = useRef<(() => void) | null>(null)
-
   const handleCopyCode = useCallback((code: string) => {
     navigator.clipboard?.writeText(code)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-  }, [])
-
-  useEffect(() => {
-    const unsubscribe = window.electronAPI?.onAuthProgress?.(() => {})
-    cleanupRef.current = () => unsubscribe?.()
-    return () => { cleanupRef.current?.() }
   }, [])
 
   const resetDeviceState = useCallback(() => {
@@ -103,7 +96,7 @@ export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, set
         setDevicePolling(true)
       }
     } catch (err: unknown) {
-      setAuthError(err instanceof Error ? err.message : "fetch failed")
+      setAuthError(err instanceof Error ? err.message : copy.error)
     } finally {
       setAuthLoading(false)
     }
@@ -140,7 +133,7 @@ export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, set
         if (result.status === "expired") {
           setDevicePolling(false)
           setDeviceStatus("expired")
-          setAuthError("fetch failed")
+          setAuthError(copy.codeExpired)
           return
         }
         if (result.status === "error" && !result.retryable) {
@@ -156,7 +149,7 @@ export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, set
         pollTimer = setTimeout(poll, Math.max(delayMs, 5000))
       } catch (err: unknown) {
         if (cancelled) return
-        setAuthError(err instanceof Error ? err.message : "fetch failed")
+        setAuthError(err instanceof Error ? err.message : copy.error)
         pollTimer = setTimeout(poll, deviceCodeInfo.interval * 1000)
       }
     }
@@ -190,7 +183,7 @@ export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, set
                   : <XnSkinsIcon className="h-6 w-6" />}
               </div>
               <div className="font-medium text-foreground">{p.title}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{p.description}</div>
+              <div className="mt-1 text-sm text-muted-foreground">{t(p.descriptionKey)}</div>
             </button>
           ))}
 
@@ -232,7 +225,7 @@ export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, set
             </div>
             <div>
               <div className="font-medium text-foreground">{provider.title}</div>
-              <div className="text-xs text-muted-foreground">fetch failed</div>
+              <div className="text-xs text-muted-foreground">{copy.chooseMethod}</div>
             </div>
           </div>
 
@@ -254,7 +247,7 @@ export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, set
               </div>
               <div>
                 <div className="font-medium text-foreground">fetch failed</div>
-                <div className="text-sm text-muted-foreground mt-1">{provider.methodOAuthDesc}</div>
+                <div className="text-sm text-muted-foreground mt-1">{copy.methodOAuthDesc}</div>
               </div>
             </button>
 
@@ -276,7 +269,7 @@ export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, set
               </div>
               <div>
                 <div className="font-medium text-foreground">fetch failed</div>
-                <div className="text-sm text-muted-foreground mt-1">{provider.methodDeviceDesc}</div>
+                <div className="text-sm text-muted-foreground mt-1">{copy.methodDeviceDesc.replace("{{site}}", provider.siteName)}</div>
               </div>
               {authLoading && <IconLoader2 className="ml-auto h-5 w-5 animate-spin text-primary" />}
             </button>
@@ -316,14 +309,14 @@ export function StepAccount({ copy, accounts, anyLoginLoading, getAvatarUrl, set
           {deviceStatus === "waiting" && (
             <div className="text-center space-y-4">
               <div>
-                <p className="text-sm text-muted-foreground mb-3">fetch failed</p>
+                <p className="text-sm text-muted-foreground mb-3">{copy.openLink}</p>
                 <a
                   href={deviceCodeInfo.verificationUriComplete}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
                 >
-fetch failed
+                  {copy.openLoginPage}
                 </a>
               </div>
 
@@ -335,24 +328,24 @@ fetch failed
                 <span className="text-2xl font-mono font-bold tracking-[0.3em] text-foreground">
                   {deviceCodeInfo.userCode}
                 </span>
-                <span className="text-xs text-muted-foreground">{copied ? "fetch failed" : "fetch failed"}</span>
+                <span className="text-xs text-muted-foreground">{copied ? copy.copied : copy.clickToCopy}</span>
               </button>
 
               <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                 <IconLoader2 className="h-4 w-4 animate-spin" />
-fetch failed
+                {copy.waitingConfirmation}
               </div>
             </div>
           )}
 
           {deviceStatus === "expired" && (
             <div className="text-center space-y-3">
-              <p className="text-sm text-destructive">{authError || "fetch failed"}</p>
+              <p className="text-sm text-destructive">{authError || copy.codeExpired}</p>
               <button
                 onClick={() => void handleStartDeviceCode(chosenProvider)}
                 className="px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium transition-colors"
               >
-fetch failed
+                {copy.requestNewCode}
               </button>
             </div>
           )}
@@ -360,7 +353,7 @@ fetch failed
           {deviceStatus === "done" && (
             <div className="flex items-center justify-center gap-2 text-sm text-primary">
               <IconCheck className="h-4 w-4" />
-fetch failed
+              {copy.loginSuccess}
             </div>
           )}
         </div>

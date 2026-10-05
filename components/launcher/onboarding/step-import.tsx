@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils"
 import { IconCheck, IconDownload, IconLoader2 } from "@tabler/icons-react"
 import { LauncherSourceIcon } from "./icons"
+import { LoaderIcon } from "@/components/launcher/instance/loader-icon"
 import type { LauncherSource, OnboardingCopy } from "./translations"
 
 type StepImportProps = {
@@ -16,11 +17,13 @@ type StepImportProps = {
 }
 
 function sourceBadge(source: string) {
-  if (source === "xlauncher") return "bg-emerald-500/15 text-emerald-300 border-emerald-400/25"
+  if (source === "xlauncher") return "bg-slate-500/15 text-slate-300 border-slate-400/25"
   if (source === "gdlauncher") return "bg-sky-500/15 text-sky-300 border-sky-400/25"
   if (source === "prism") return "bg-violet-500/15 text-violet-300 border-violet-400/25"
+  if (source === "polymc") return "bg-green-500/15 text-green-300 border-green-400/25"
+  if (source === "multimc") return "bg-green-500/15 text-green-300 border-green-400/25"
   if (source === "astralrinth") return "bg-cyan-500/15 text-cyan-300 border-cyan-400/25"
-  if (source === "modrinthapp") return "bg-orange-500/15 text-orange-300 border-orange-400/25"
+  if (source === "modrinthapp") return "bg-lime-500/15 text-lime-300 border-lime-400/25"
   return "bg-muted text-muted-foreground border-border"
 }
 
@@ -118,7 +121,12 @@ export function StepImport({ copy, importableInstances, selectedImportIds, activ
                           {copy.sourceNames[instance.source] ?? instance.source}
                         </span>
                       </div>
-                      <div className="mt-2 text-sm text-muted-foreground">{instance.version} • {instance.modLoader}</div>
+                      <div className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
+                        <span>{instance.version}</span>
+                        <span>•</span>
+                        <LoaderIcon loaderId={instance.modLoader} className="w-4 h-4 flex-shrink-0" />
+                        <span className="capitalize">{instance.modLoader}</span>
+                      </div>
                       {counts && <div className="mt-3 text-sm text-muted-foreground">{counts}</div>}
                     </div>
                     <div

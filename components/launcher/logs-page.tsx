@@ -244,8 +244,29 @@ function tokenizeLog(text: string, level: LogLevel): Token[] {
   return tokens
 }
 
-function renderSyntaxHighlighted(text: string, level: LogLevel): React.ReactNode {
+/**
+ * Кэш разбора строки на токены.
+ *
+ * `tokenizeLog` прогоняет ~15 регулярных выражений по строке, а список
+ * перерисовывается при каждом изменении фильтра, поиска или автоскролла — то
+ * есть одни и те же строки (до 2000) разбирались заново. Ключ включает уровень:
+ * от него зависит подсветка.
+ */
+const TOKEN_CACHE_LIMIT = 4000
+const tokenCache = new Map<string, Token[]>()
+
+function tokenizeLogCached(text: string, level: LogLevel): Token[] {
+  const key = `${level}\u0000${text}`
+  const cached = tokenCache.get(key)
+  if (cached) return cached
   const tokens = tokenizeLog(text, level)
+  if (tokenCache.size >= TOKEN_CACHE_LIMIT) tokenCache.clear()
+  tokenCache.set(key, tokens)
+  return tokens
+}
+
+function renderSyntaxHighlighted(text: string, level: LogLevel): React.ReactNode {
+  const tokens = tokenizeLogCached(text, level)
   return (
     <>
       {tokens.map((t, i) => (
@@ -315,7 +336,7 @@ const LogRow = memo(function LogRow({ entry, label }: { entry: LogEntry; label: 
 
 // --- LogsPage ---
 
-export function LogsPage() {
+export function LogsPage({ focus }: { focus?: { crash: boolean; at: number } | null } = {}) {
   const { logs, clearLogs, isRunning } = useLaunchLogs()
   const [copied, setCopied] = useState(false)
   const [shareState, setShareState] = useState<"idle" | "loading" | "done" | "error">("idle")
@@ -325,6 +346,7 @@ export function LogsPage() {
   const deferredSearch = useDeferredValue(search)
   const [autoScroll, setAutoScroll] = useState(true)
   const [aiDialogOpen, setAiDialogOpen] = useState(false)
+  const [crashFocus, setCrashFocus] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const { t } = useTranslation()
 
@@ -347,14 +369,34 @@ export function LogsPage() {
     return entries
   }, [logs, filter, deferredSearch])
 
+  const visibleLogs = filtered
+
+  // Автоскролл включён — всегда держим низ логов. Проверять «были ли мы у низа»
+  // здесь нельзя: к моменту эффекта контейнер уже вырос на всю новую порцию строк,
+  // и на пачке логов условие не проходило — автоскролл переставал листать,
+  // хотя оставался включённым.
   useEffect(() => {
     if (!autoScroll || !containerRef.current || filtered.length === 0) return
     const el = containerRef.current
-    const maxScroll = el.scrollHeight - el.clientHeight
-    if (maxScroll > 0 && el.scrollTop >= maxScroll - 80) {
-      el.scrollTop = maxScroll
-    }
+    el.scrollTop = el.scrollHeight
   }, [filtered, autoScroll])
+
+  // Открыто из-за краша игры: сразу включаем автоскролл, а фильтр «Ошибки»
+  // переключаем, когда строки краша доедут до состояния — лог приходит пакетами,
+  // и в момент открытия вкладки их там ещё может не быть.
+  useEffect(() => {
+    if (!focus?.crash) return
+    setAutoScroll(true)
+    setCrashFocus(true)
+  }, [focus?.at, focus?.crash])
+
+  useEffect(() => {
+    if (!crashFocus) return
+    if (levelCounts.error > 0) {
+      setFilter("error")
+      setCrashFocus(false)
+    }
+  }, [crashFocus, levelCounts.error])
 
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return
@@ -403,7 +445,7 @@ export function LogsPage() {
   )
 
   return (
-    <div className="h-[700px] flex flex-col gap-4 animate-in fade-in-0 duration-300">
+    <div className="w-full h-full min-h-0 flex flex-col gap-4 animate-in fade-in-0 duration-300">
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -412,14 +454,7 @@ export function LogsPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-foreground">{t("logs.title")}</h1>
-            <p className="text-sm text-muted-foreground">
-              {isRunning
-                ? <span className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
-                    {t("logs.running", { count: logs.length })}
-                  </span>
-                : t("logs.entries", { count: logs.length })}
-            </p>
+            <p className="text-sm text-muted-foreground">{t("logs.subtitle")}</p>
           </div>
         </div>
 
@@ -470,6 +505,11 @@ export function LogsPage() {
             className="w-full pl-9 pr-4 py-2 rounded-xl bg-muted/50 border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary" />
         </div>
 
+        <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-muted/50 text-xs text-muted-foreground flex-shrink-0">
+          {isRunning && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />}
+          {isRunning ? t("logs.running", { count: logs.length }) : t("logs.entries", { count: logs.length })}
+        </div>
+
         <button type="button" onClick={() => setAutoScroll(v => !v)}
           className={cn("flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-colors flex-shrink-0",
             autoScroll ? "bg-primary/20 text-primary" : "bg-muted/50 text-muted-foreground hover:text-foreground")}>
@@ -479,14 +519,14 @@ export function LogsPage() {
 
       {/* Log area */}
       <div ref={containerRef} onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-border bg-[#0d0d14] font-mono text-[12px] leading-5">
+        className="flex-1 min-h-0 overflow-y-auto bg-[#0d0d14] font-mono text-[12px] leading-5 rounded-2xl border border-border">
         {filtered.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-muted-foreground">
             <IconFileText className="w-10 h-10 mb-3 opacity-30" /><p className="text-sm">{t("logs.empty")}</p>
           </div>
         ) : (
           <div className="p-3 space-y-0.5">
-            {filtered.map(entry => <LogRow key={entry.id} entry={entry} label={levelLabels[entry.level] ?? entry.level} />)}
+            {visibleLogs.map(entry => <LogRow key={entry.id} entry={entry} label={levelLabels[entry.level] ?? entry.level} />)}
           </div>
         )}
       </div>

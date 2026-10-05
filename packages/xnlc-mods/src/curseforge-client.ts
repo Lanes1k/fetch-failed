@@ -6,6 +6,7 @@
 import type {
   ContentType,
   ModSort,
+  ModEnvironment,
   ModSearchResult,
   ModSearchResponse,
   ModDetails,
@@ -26,12 +27,18 @@ let cfCategoriesCache: Array<{ id: number; slug: string; name: string; classId: 
 const CF_CLASSID_TO_PROJECTTYPE: Record<number, ContentType> = {
   6: "mod",
   12: "resourcepack",
+  17: "world",
   6552: "shader",
   4471: "modpack",
+  6945: "datapack",
+  5: "plugin",
 };
 let cfCategoriesFullCache: ModCategory[] | null = null;
 
 const CF_MOD_LOADER_TYPES: Record<string, number> = {
+  forge: 1,
+  cauldron: 2,
+  liteloader: 3,
   fabric: 4,
   quilt: 5,
   neoforge: 6,
@@ -52,7 +59,7 @@ export async function cfFetch(endpoint: string, params: Record<string, string> =
         headers: { "x-api-key": CF_API_KEY },
         signal: controller.signal,
       });
-      if (!res.ok) throw new Error(`CF API ${res.status}: ${res.statusText}`);
+      if (!res.ok) throw new Error(`fetch failed${res.status}: ${res.statusText}`);
       return await res.json();
     } catch (err: any) {
       lastError = err;
@@ -77,6 +84,7 @@ function detectCFLoaders(gameVersions: unknown[]): string[] {
     const normalized = String(value ?? "").trim().toLowerCase();
     if (normalized === "fabric") loaders.add("fabric");
     if (normalized === "quilt") loaders.add("quilt");
+    if (normalized === "forge") loaders.add("forge");
     if (normalized === "neoforge" || normalized === "neo forge") loaders.add("neoforge");
   }
 
@@ -118,8 +126,43 @@ async function resolveCFCategoryId(category: string, contentType?: ContentType):
   return match?.id ?? null;
 }
 
+const CF_TYPE_TO_LOADER_NAME: Record<number, string> = {
+  1: "forge",
+  2: "cauldron",
+  3: "liteloader",
+  4: "fabric",
+  5: "quilt",
+  6: "neoforge",
+};
+
 function normalizeCFSearchItem(item: any): ModSearchResult {
   const primaryFile = item.latestFiles?.find((f: any) => f.isAvailable) ?? item.latestFiles?.[0];
+  const indexes: any[] = Array.isArray(item.latestFilesIndexes) ? item.latestFilesIndexes : [];
+  const versionsSet = new Set<string>();
+  const loadersSet = new Set<string>();
+
+  for (const idx of indexes) {
+    if (idx.gameVersion) versionsSet.add(String(idx.gameVersion).trim());
+    const loaderName = CF_TYPE_TO_LOADER_NAME[Number(idx.modLoader)];
+    if (loaderName) loadersSet.add(loaderName);
+  }
+
+  if (Array.isArray(item.latestFiles)) {
+    for (const f of item.latestFiles) {
+      if (Array.isArray(f.gameVersions)) {
+        for (const gv of f.gameVersions) {
+          const s = String(gv).trim();
+          const lower = s.toLowerCase();
+          if (["forge", "fabric", "neoforge", "quilt"].includes(lower)) {
+            loadersSet.add(lower);
+          } else if (s) {
+            versionsSet.add(s);
+          }
+        }
+      }
+    }
+  }
+
   return {
     id: `cf-${item.id}`,
     slug: item.slug ?? item.name?.toLowerCase().replace(/\s+/g, "-") ?? `mod-${item.id}`,
@@ -136,6 +179,8 @@ function normalizeCFSearchItem(item: any): ModSearchResult {
     fileSize: primaryFile?.fileLength ?? 0,
     dateCreated: item.dateCreated ?? primaryFile?.fileDate ?? undefined,
     dateModified: item.dateModified ?? primaryFile?.fileDate ?? undefined,
+    gameVersions: Array.from(versionsSet),
+    loaders: Array.from(loadersSet),
   };
 }
 
@@ -168,11 +213,49 @@ function sortCFSearchItems(items: any[], sortBy: ModSort): any[] {
   return sorted;
 }
 
+// Official CurseForge `FileRelationType` values (see CF "Mod dependencies and
+// file relationships" docs): 0 None, 1 EmbeddedLibrary, 2 OptionalDependency,
+// 3 RequiredDependency, 4 Tool, 5 Incompatible, 6 Include.
 const CF_DEP_TYPE_MAP: Record<number, ModDependency["dependencyType"]> = {
-  1: "required",
+  0: "embedded",
+  1: "embedded",
   2: "optional",
-  3: "incompatible",
-  4: "embedded",
+  3: "required",
+  4: "optional",
+  5: "incompatible",
+  6: "embedded",
+}
+
+/**
+ * CurseForge encodes the release channel in `releaseType`
+ * (1 = release, 2 = beta, 3 = alpha). Some proxies/endpoints omit it, so fall
+ * back to an explicit "alpha"/"beta" marker in the file/display name. Never
+ * match a bare "a"/"b" letter: it produces false positives (e.g. any word
+ * containing it), which is why stable files were being flagged as beta.
+ */
+function detectCFReleaseType(f: any): ModVersion["versionType"] {
+  const raw = Number(f?.releaseType);
+  if (raw === 1) return "release";
+  if (raw === 2) return "beta";
+  if (raw === 3) return "alpha";
+
+  const haystack = `${f?.fileName ?? ""} ${f?.displayName ?? ""}`.toLowerCase();
+  if (/alpha/.test(haystack)) return "alpha";
+  if (/beta/.test(haystack)) return "beta";
+  return "release";
+}
+
+// CurseForge mixes environment markers (Client/Server), mod loaders and the
+// actual Minecraft version into a single `gameVersions` array. Only the MC
+// version belongs in `gameVersion`; loaders are surfaced separately via
+// `loaders` and the environment is irrelevant (the launcher is client-only).
+const CF_GAME_VERSION_NOISE = new Set(["client", "server", "fabric", "forge", "quilt", "neoforge", "neo forge", "liteloader", "cauldron"]);
+
+function extractCFGameVersion(gameVersions: unknown[]): string {
+  return gameVersions
+    .map(v => String(v ?? "").trim())
+    .filter(v => v && !CF_GAME_VERSION_NOISE.has(v.toLowerCase()))
+    .join(", ");
 }
 
 function normalizeCFVersion(f: any): ModVersion {
@@ -180,11 +263,14 @@ function normalizeCFVersion(f: any): ModVersion {
   return {
     id: String(f.id ?? ""),
     name: f.displayName ?? f.fileName ?? `v${f.id}`,
-    gameVersion: gameVersions.join(", "),
+    versionNumber: f.displayName ?? undefined,
+    gameVersion: extractCFGameVersion(gameVersions),
     downloadCount: f.downloadCount ?? 0,
     fileName: f.fileName ?? "",
     fileSize: f.fileLength ?? 0,
     loaders: detectCFLoaders(gameVersions),
+    versionType: detectCFReleaseType(f),
+    datePublished: typeof f.fileDate === "string" ? f.fileDate : undefined,
     dependencies: (f.dependencies ?? []).map((d: any) => ({
       projectId: String(d.modId ?? ""),
       versionId: null,
@@ -204,6 +290,7 @@ export async function curseforgeSearch(
     categories?: string[];
     sortBy?: ModSort;
     page?: number;
+    environment?: ModEnvironment;
   },
 ): Promise<ModSearchResponse> {
   const contentType = options?.contentType ?? "mod";
@@ -252,12 +339,44 @@ export async function curseforgeSearch(
   }
 }
 
+/** Размер страницы в `/mods/{id}/files`: больше 50 CurseForge не отдаёт. */
+const CF_FILES_PAGE_SIZE = 50;
+/** Предохранитель от бесконечной пагинации: 20 страниц по 50 файлов. */
+const CF_FILES_MAX = 1000;
+
+/**
+ * Все файлы проекта.
+ *
+ * `/mods/{id}/files` отдаёт файлы постранично, и раньше клиент запрашивал только
+ * первую страницу из 30 записей. У проектов с длинной историей (Jade — 398
+ * файлов) свежие сборки под нужную версию Minecraft оказываются за пределами
+ * этого окна: модалка писала «нет версий для NeoForge 1.21.11», хотя файлы есть.
+ * Поэтому идём по страницам до конца списка.
+ */
+async function fetchAllCFModFiles(modId: number): Promise<any[]> {
+  const files: any[] = [];
+  let index = 0;
+  while (files.length < CF_FILES_MAX) {
+    const page = (await cfFetch(`/mods/${modId}/files`, {
+      pageSize: String(CF_FILES_PAGE_SIZE),
+      index: String(index),
+    })) as { data?: any[]; pagination?: { totalCount?: number } };
+    const batch = page.data ?? [];
+    files.push(...batch);
+    const total = page.pagination?.totalCount ?? files.length;
+    index += batch.length;
+    // Пустая страница или достигнут конец списка — дальше запрашивать нечего.
+    if (batch.length === 0 || files.length >= total) break;
+  }
+  return files;
+}
+
 export async function curseforgeGetDetails(modId: number): Promise<ModDetails | null> {
   try {
     const modRes = (await cfFetch(`/mods/${modId}`)) as { data?: any };
-    const filesRes = (await cfFetch(`/mods/${modId}/files`, { pageSize: "30" })) as { data?: any[] };
     const mod = modRes.data;
     if (!mod) return null;
+    const files = await fetchAllCFModFiles(mod.id ?? modId);
 
     return {
       id: `cf-${mod.id}`,
@@ -268,17 +387,43 @@ export async function curseforgeGetDetails(modId: number): Promise<ModDetails | 
       iconUrl: mod.links?.iconUrl ?? mod.logo?.thumbnailUrl ?? "",
       downloadCount: mod.downloadCount ?? 0,
       categories: normalizeCFCategories(mod.categories ?? []).slice(0, 5),
-      versions: (filesRes.data ?? []).map(normalizeCFVersion),
+      versions: files.map(normalizeCFVersion),
       gallery: (mod.screenshots ?? []).map((s: any) => ({
         url: s.url ?? s.thumbnailUrl ?? "",
         title: s.title ?? "",
       })),
       source: "curseforge",
       modId: mod.id,
+      links: {
+        websiteUrl: mod.links?.websiteUrl || undefined,
+        wikiUrl: mod.links?.wikiUrl || undefined,
+        issuesUrl: mod.links?.issuesUrl || undefined,
+        sourceUrl: mod.links?.sourceUrl || undefined,
+      },
     };
   } catch (err) {
     console.error("CF mod-details error:", err);
     return null;
+  }
+}
+
+export async function curseforgeGetChangelog(modId: number, fileId: number): Promise<string> {
+  try {
+    const res = (await cfFetch(`/mods/${modId}/files/${fileId}/changelog`)) as { data?: string };
+    return res.data ?? "";
+  } catch (err) {
+    console.warn("CF changelog error:", err);
+    return "";
+  }
+}
+
+export async function curseforgeGetDescription(modId: number): Promise<string> {
+  try {
+    const res = (await cfFetch(`/mods/${modId}/description`)) as { data?: string };
+    return res.data ?? "";
+  } catch (err) {
+    console.warn("CF description error:", err);
+    return "";
   }
 }
 
@@ -313,6 +458,71 @@ export async function curseforgeGetDownloadUrl(modId: number, fileId: number): P
   } catch {
     return null;
   }
+}
+
+export interface CurseForgeFileInfo {
+  id: number;
+  modId: number;
+  fileName: string;
+  downloadUrl: string;
+  fileLength?: number;
+}
+
+/**
+ * Batch retrieves files info and download URLs via POST /v1/mods/files
+ * Reduces 100+ individual requests down to 1-2 requests during modpack import!
+ */
+export async function curseforgeGetFiles(fileIds: number[]): Promise<Record<number, CurseForgeFileInfo>> {
+  const cleaned = [...new Set(fileIds.filter((id) => Number.isFinite(id) && id > 0))];
+  if (cleaned.length === 0) return {};
+
+  const result: Record<number, CurseForgeFileInfo> = {};
+  const CHUNK_SIZE = 150;
+
+  for (let i = 0; i < cleaned.length; i += CHUNK_SIZE) {
+    const chunk = cleaned.slice(i, i + CHUNK_SIZE);
+    try {
+      const res = await fetch(`${CF_BASE}/mods/files`, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "x-api-key": CF_API_KEY,
+        },
+        body: JSON.stringify({ fileIds: chunk }),
+      });
+
+      if (res.ok) {
+        const json = (await res.json()) as { data?: any[] };
+        const list = Array.isArray(json.data) ? json.data : [];
+        for (const file of list) {
+          if (!file || !file.id) continue;
+          let downloadUrl = file.downloadUrl;
+          const fileName = file.fileName || `mod-${file.id}.jar`;
+          // Fallback to official CurseForge edge CDN if direct downloadUrl is null
+          if (!downloadUrl && fileName) {
+            const part1 = Math.floor(file.id / 1000);
+            const part2 = file.id % 1000;
+            downloadUrl = `https://edge.forgecdn.net/files/${part1}/${part2}/${encodeURIComponent(fileName)}`;
+          }
+
+          if (downloadUrl) {
+            result[file.id] = {
+              id: file.id,
+              modId: file.modId,
+              fileName,
+              downloadUrl,
+              fileLength: file.fileLength,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("CurseForge getFiles batch error:", err);
+    }
+  }
+
+  return result;
 }
 
 export type CurseforgeFingerprintMatch = {
@@ -361,7 +571,7 @@ export async function curseforgeGetFingerprintsMatches(
           body: JSON.stringify({ fingerprints: chunk }),
           signal,
         })
-        if (!res.ok) throw new Error(`CF API ${res.status}: ${res.statusText}`)
+        if (!res.ok) throw new Error(`fetch failed${res.status}: ${res.statusText}`)
         const json = (await res.json()) as { data?: { exactMatches?: unknown[] } }
         for (const m of json.data?.exactMatches ?? []) {
           const file = (m as Record<string, unknown>)?.file as Record<string, unknown> | undefined
@@ -394,14 +604,52 @@ export async function curseforgeGetProjectInfo(modId: number | string): Promise<
     const d = data.data;
     const logo = d.logo as Record<string, unknown> | undefined;
     const links = d.links as Record<string, unknown> | undefined;
+    const authors = d.authors as Array<Record<string, unknown>> | undefined;
     return {
       name: (d.name as string) ?? String(modId),
       iconUrl: (logo?.thumbnailUrl as string) ?? (links?.iconUrl as string) ?? "",
       slug: (d.slug as string) ?? `mod-${modId}`,
+      author: Array.isArray(authors) ? authors.map(a => a.name).filter(Boolean).join(", ") : undefined,
     };
   } catch {
     return null;
   }
+}
+
+export async function curseforgeGetProjectsByIds(modIds: number[]): Promise<Record<number, ModProjectInfo>> {
+  const result: Record<number, ModProjectInfo> = {};
+  if (!modIds.length) return result;
+
+  const uniqueIds = [...new Set(modIds.filter(n => Number.isFinite(n) && n > 0))];
+  if (uniqueIds.length === 0) return result;
+
+  const CHUNK = 50;
+  for (let i = 0; i < uniqueIds.length; i += CHUNK) {
+    const chunk = uniqueIds.slice(i, i + CHUNK);
+    try {
+      const data = await cfFetch("/mods", {
+        modIds: JSON.stringify(chunk),
+        gameId: String(CF_GAME_ID_MINECRAFT),
+      }) as { data?: Array<Record<string, unknown>> };
+      for (const mod of (data.data ?? [])) {
+        const id = mod.id as number | undefined;
+        if (!id) continue;
+        const logo = mod.logo as Record<string, unknown> | undefined;
+        const links = mod.links as Record<string, unknown> | undefined;
+        const authors = mod.authors as Array<Record<string, unknown>> | undefined;
+        result[id] = {
+          name: (mod.name as string) ?? String(id),
+          iconUrl: (logo?.thumbnailUrl as string) ?? (links?.iconUrl as string) ?? "",
+          slug: (mod.slug as string) ?? `mod-${id}`,
+          author: Array.isArray(authors) ? authors.map(a => a.name).filter(Boolean).join(", ") : undefined,
+          isAvailable: (mod.isAvailable as boolean | undefined) ?? true,
+        };
+      }
+    } catch {
+      // skip batch on error
+    }
+  }
+  return result;
 }
 
 export async function curseforgeGetCategories(): Promise<ModCategory[]> {
@@ -421,6 +669,7 @@ export async function curseforgeGetCategories(): Promise<ModCategory[]> {
         header: (c.parentId ? nameMap.get(String(c.parentId)) : undefined) ?? "categories",
         projectType: CF_CLASSID_TO_PROJECTTYPE[c.classId],
         cfCategoryId: c.id,
+        slug: c.slug,
       }));
     return cfCategoriesFullCache;
   } catch {

@@ -14,7 +14,7 @@ export type EnrichableMod = {
 
 const MODRINTH_API = "https://api.modrinth.com/v2"
 const BATCH_SIZE = 50
-const USER_AGENT = "XNeon-Launcher/1.0"
+const USER_AGENT = "Xneon-Launcher/1.0"
 
 type CachedMeta = { name?: string; author?: string }
 
@@ -68,7 +68,7 @@ export function clearModrinthEnrichCache(): void {
 export async function enrichBuildModNames<T extends EnrichableMod>(items: T[]): Promise<T[]> {
   const uniqueIds = Array.from(new Set(
     items
-      .filter(item => item.source === "modrinth" && item.projectId)
+      .filter(item => item.source === "modrinth" && item.projectId && (!item.name || !item.author))
       .map(item => item.projectId!),
   ))
   const missing = uniqueIds.filter(id => !enrichCache.has(id))

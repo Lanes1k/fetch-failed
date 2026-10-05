@@ -1,13 +1,12 @@
+import { opFailure } from "../../errors"
 import { shell } from "electron"
-import http from "http"
 import { URL } from "url"
 import fs from "fs/promises"
 import path from "path"
 import type { CloudProvider, CloudAuthResult, CloudFileListResult, CloudUploadResult, CloudDownloadResult, CloudStorageQuota, CloudFileInfo } from "../provider"
-import { callbackSuccessPage, callbackErrorPage } from "../callback-page"
 import { getCloudCredentials } from "../credentials"
-import { generatePkcePair } from "../pkce"
-import { dbHelpers } from "../../../db"
+import { readCloudToken, writeCloudToken, clearCloudToken } from "../token-store"
+import { runOAuthLoopback } from "../oauth-loopback"
 import { fetchWithRetry } from "@xnlc/core/retry"
 
 const REDIRECT_PORT = 18936
@@ -15,8 +14,8 @@ const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}`
 const AUTH_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
 const TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 const GRAPH_API = "https://graph.microsoft.com/v1.0"
-const BASE_FOLDER = "Xneon Launcher"
-const SUB_FOLDERS = ["builds", "accounts"]
+const BASE_FOLDER = "fetch failed"
+const SUB_FOLDERS = ["builds", "accounts", "servers"]
 const SCOPES = "Files.ReadWrite offline_access User.Read"
 const ONEDRIVE_CLIENT_ID = getCloudCredentials().onedrive.clientId
 
@@ -27,21 +26,11 @@ type OneDriveConfig = {
   expires_at?: number
 }
 
-async function readConfig(): Promise<OneDriveConfig | null> {
-  try {
-    const raw = await dbHelpers.getCloudConfig("onedrive")
-    if (raw) return JSON.parse(raw) as OneDriveConfig
-  } catch { /* noop */ }
-  return null
-}
-
-async function writeConfig(config: OneDriveConfig): Promise<void> {
-  const raw = JSON.stringify(config)
-  await dbHelpers.setCloudConfig("onedrive", raw)
-}
+const readConfig = () => readCloudToken<OneDriveConfig>("onedrive")
+const writeConfig = (config: OneDriveConfig) => writeCloudToken("onedrive", config)
 
 async function refreshAccessToken(config: OneDriveConfig): Promise<OneDriveConfig> {
-  if (!config.refresh_token) throw new Error("No refresh token")
+  if (!config.refresh_token) throw new Error("fetch failed")
   const body = new URLSearchParams({ client_id: config.client_id, grant_type: "refresh_token", refresh_token: config.refresh_token, scope: SCOPES })
   const res = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
@@ -51,7 +40,7 @@ async function refreshAccessToken(config: OneDriveConfig): Promise<OneDriveConfi
   if (!res.ok) {
     let detail = ""
     try { detail = await res.text() } catch { /* noop */ }
-    throw new Error(`Refresh failed: ${res.status}${detail ? ` — ${detail}` : ""}`)
+    throw new Error(`fetch failed${res.status}${detail ? ` — ${detail}` : ""}`)
   }
   const data = await res.json() as { access_token: string; expires_in: number; refresh_token?: string }
   const updated: OneDriveConfig = {
@@ -101,7 +90,7 @@ async function ensureRemoteFolder(config: OneDriveConfig, remotePath: string): P
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: seg, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
     })
-    if (!res.ok && res.status !== 409) throw new Error(`Create folder failed: ${res.status}`)
+    if (!res.ok && res.status !== 409) throw new Error(`fetch failed${res.status}`)
     current = current ? `${current}/${seg}` : seg
   }
 }
@@ -114,66 +103,53 @@ export class OneDriveProvider implements CloudProvider {
     const existing = await readConfig()
     const clientId = authData?.client_id || existing?.client_id || ONEDRIVE_CLIENT_ID
     if (!clientId) return { success: false, error: "fetch failed" }
-    const { verifier, challenge } = generatePkcePair()
 
-    return new Promise((resolve) => {
-      const authUrl = new URL(AUTH_ENDPOINT)
-      authUrl.searchParams.set("client_id", clientId)
-      authUrl.searchParams.set("response_type", "code")
-      authUrl.searchParams.set("redirect_uri", REDIRECT_URI)
-      authUrl.searchParams.set("scope", SCOPES)
-      authUrl.searchParams.set("code_challenge", challenge)
-      authUrl.searchParams.set("code_challenge_method", "S256")
-      authUrl.searchParams.set("prompt", "select_account")
-
-      const server = http.createServer(async (req, res) => {
-        const url = new URL(req.url || "/", REDIRECT_URI)
-        const code = url.searchParams.get("code")
-        if (!code) { res.writeHead(400); res.end("No code"); return }
-
-        try {
-          const body = new URLSearchParams({ client_id: clientId, grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI, code_verifier: verifier, scope: SCOPES })
-          const tokenRes = await fetch(TOKEN_ENDPOINT, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body,
-          })
-          if (!tokenRes.ok) {
-            let detail = ""
-            try { detail = await tokenRes.text() } catch { /* noop */ }
-            throw new Error(`Token exchange failed: ${tokenRes.status}${detail ? ` — ${detail}` : ""}`)
-          }
-          const data = await tokenRes.json() as { access_token: string; expires_in: number; refresh_token?: string }
-          await writeConfig({
-            client_id: clientId,
-            access_token: data.access_token,
-            refresh_token: data.refresh_token,
-            expires_at: Date.now() + data.expires_in * 1000,
-          })
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
-          res.end(callbackSuccessPage("OneDrive"))
-          server.close()
-          resolve({ success: true, provider: "onedrive" })
-        } catch (e) {
-          res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" })
-          res.end(callbackErrorPage("OneDrive", e instanceof Error ? e.message : String(e)))
-          server.close()
-          resolve({ success: false, error: e instanceof Error ? e.message : String(e) })
+    // Общий loopback-каркас (см. oauth-loopback.ts).
+    return runOAuthLoopback({
+      providerLabel: "OneDrive",
+      providerId: "onedrive",
+      port: REDIRECT_PORT,
+      buildAuthUrl: ({ challenge }) => {
+        const authUrl = new URL(AUTH_ENDPOINT)
+        authUrl.searchParams.set("client_id", clientId)
+        authUrl.searchParams.set("response_type", "code")
+        authUrl.searchParams.set("redirect_uri", REDIRECT_URI)
+        authUrl.searchParams.set("scope", SCOPES)
+        authUrl.searchParams.set("code_challenge", challenge)
+        authUrl.searchParams.set("code_challenge_method", "S256")
+        authUrl.searchParams.set("prompt", "select_account")
+        return authUrl.toString()
+      },
+      exchange: async (code, verifier) => {
+        const tokenRes = await fetch(TOKEN_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ client_id: clientId, grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI, code_verifier: verifier, scope: SCOPES }),
+        })
+        if (!tokenRes.ok) {
+          let detail = ""
+          try { detail = await tokenRes.text() } catch { /* noop */ }
+          throw new Error(`fetch failed${tokenRes.status}${detail ? ` — ${detail}` : ""}`)
         }
-      })
-      server.listen(REDIRECT_PORT, () => { shell.openExternal(authUrl.toString()) })
-      setTimeout(() => { server.close(); resolve({ success: false, error: "Timeout" }) }, 120000)
+        const data = await tokenRes.json() as { access_token: string; expires_in: number; refresh_token?: string }
+        await writeConfig({
+          client_id: clientId,
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          expires_at: Date.now() + data.expires_in * 1000,
+        })
+      },
     })
   }
 
   async isAuthenticated(): Promise<boolean> { return (await getValidConfig()) !== null }
   async logout(): Promise<void> {
-    try { await dbHelpers.removeCloudConfig("onedrive") } catch { /* noop */ }
+    await clearCloudToken("onedrive")
   }
 
   async ensureBaseFolder(): Promise<void> {
     const config = await getValidConfig()
-    if (!config) throw new Error("Not authenticated")
+    if (!config) throw new Error("fetch failed")
     for (const sub of SUB_FOLDERS) {
       await ensureRemoteFolder(config, sub)
     }
@@ -181,12 +157,12 @@ export class OneDriveProvider implements CloudProvider {
 
   async listFiles(folderPath?: string): Promise<CloudFileListResult> {
     const config = await getValidConfig()
-    if (!config) return { success: false, error: "Not authenticated" }
+    if (!config) return { success: false, error: "fetch failed" }
     try {
       const target = folderPath ? `${BASE_FOLDER}/${folderPath}` : BASE_FOLDER
       const res = await graphFetch(`${GRAPH_API}/me/drive/root:/${encodeGraphPath(target)}:/children`, config)
       if (res.status === 404) return { success: true, files: [] }
-      if (!res.ok) throw new Error(`List failed: ${res.status}`)
+      if (!res.ok) throw new Error(`fetch failed${res.status}`)
       const data = await res.json() as { value: { id: string; name: string; size?: number; lastModifiedDateTime?: string; folder?: unknown }[] }
       const files: CloudFileInfo[] = (data.value || []).map(f => ({
         id: f.id,
@@ -198,12 +174,12 @@ export class OneDriveProvider implements CloudProvider {
         category: f.folder ? undefined : (folderPath || "builds"),
       }))
       return { success: true, files }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async uploadFile(localPath: string, remotePath: string, onProgress?: (percent: number) => void): Promise<CloudUploadResult> {
     const config = await getValidConfig()
-    if (!config) return { success: false, error: "Not authenticated" }
+    if (!config) return { success: false, error: "fetch failed" }
     try {
       const fileName = path.basename(localPath)
       const parent = remotePath.split("/").slice(0, -1).filter(Boolean).join("/")
@@ -233,41 +209,41 @@ export class OneDriveProvider implements CloudProvider {
             filePath: localPath,
             onProgress,
           })
-          if (!res2.ok) throw new Error(`Upload failed: ${res2.status}`)
+          if (!res2.ok) throw new Error(`fetch failed${res2.status}`)
           return { success: true, id: full, name: fileName }
         } catch (e) {
           if (e instanceof Error && e.message.startsWith("Upload failed")) throw e
-          throw new Error(`Upload failed: 401`)
+          throw new Error(`fetch failed`)
         }
       }
-      if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+      if (!res.ok) throw new Error(`fetch failed${res.status}`)
       return { success: true, id: full, name: fileName }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async downloadFile(remotePath: string, localPath: string): Promise<CloudDownloadResult> {
     const config = await getValidConfig()
-    if (!config) return { success: false, error: "Not authenticated" }
+    if (!config) return { success: false, error: "fetch failed" }
     try {
       const full = `${BASE_FOLDER}/${remotePath}`
       const res = await graphFetch(`${GRAPH_API}/me/drive/root:/${encodeGraphPath(full)}:/content`, config)
-      if (!res.ok) throw new Error(`Download failed: ${res.status}`)
+      if (!res.ok) throw new Error(`fetch failed${res.status}`)
       const arrayBuffer = await res.arrayBuffer()
       await fs.mkdir(path.dirname(localPath), { recursive: true })
       await fs.writeFile(localPath, Buffer.from(arrayBuffer))
       return { success: true, localPath }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async deleteFile(remotePath: string): Promise<{ success: boolean; error?: string }> {
     const config = await getValidConfig()
-    if (!config) return { success: false, error: "Not authenticated" }
+    if (!config) return { success: false, error: "fetch failed" }
     try {
       const full = `${BASE_FOLDER}/${remotePath}`
       const res = await graphFetch(`${GRAPH_API}/me/drive/root:/${encodeGraphPath(full)}:`, config, { method: "DELETE" })
-      if (!res.ok && res.status !== 404) throw new Error(`Delete failed: ${res.status}`)
+      if (!res.ok && res.status !== 404) throw new Error(`fetch failed${res.status}`)
       return { success: true }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async getStorageQuota(): Promise<CloudStorageQuota | null> {

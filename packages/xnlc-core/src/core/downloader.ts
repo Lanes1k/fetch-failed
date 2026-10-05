@@ -107,7 +107,7 @@ export class DownloadTask {
 
     this.status.status = "failed";
     this.status.error = lastError?.message;
-    throw lastError ?? new Error(`Failed to download ${url} after ${retries} attempts`);
+    throw lastError ?? new Error(`fetch failed${url} after ${retries} attempts`);
   }
 
   private async downloadOnce(
@@ -118,7 +118,7 @@ export class DownloadTask {
   ): Promise<void> {
     if (url.startsWith("file://")) {
       const sourcePath = url.slice(7);
-      if (!fsSync.existsSync(sourcePath)) throw new Error(`File not found: ${sourcePath}`);
+      if (!fsSync.existsSync(sourcePath)) throw new Error(`fetch failed${sourcePath}`);
       ensureDirSync(path.dirname(dest));
       fsSync.copyFileSync(sourcePath, dest);
       return;
@@ -143,7 +143,7 @@ export class DownloadTask {
     
     const writeStream = fsSync.createWriteStream(tempPath);
     const reader = res.body?.getReader();
-    if (!reader) throw new Error("No reader for response body");
+    if (!reader) throw new Error("fetch failed");
 
     let downloaded = 0;
     let rejectStream: ((err: Error) => void) | undefined;
@@ -186,7 +186,7 @@ export class DownloadTask {
       if (expectedSha1) {
         const actualSha1 = sha1Hash(fsSync.readFileSync(tempPath));
         if (actualSha1 !== expectedSha1) {
-          throw new Error(`SHA1 mismatch: expected ${expectedSha1}, got ${actualSha1}`);
+          throw new Error(`fetch failed${expectedSha1}fetch failed${actualSha1}`);
         }
       }
 
@@ -255,7 +255,7 @@ export class DownloadJob {
 
     const failed = this.tasks.filter(t => t.status.status === "failed");
     if (failed.length > 0) {
-      throw new Error(`Job "${this.name}" failed with ${failed.length} errors. First error: ${failed[0].status.error}`);
+      throw new Error(`fetch failed${this.name}fetch failed${failed.length} errors. First error: ${failed[0].status.error}`);
     }
   }
 

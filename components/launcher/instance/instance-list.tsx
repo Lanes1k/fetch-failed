@@ -1,18 +1,26 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import {
-  IconPackage, IconPlus, IconCopy, IconTrash, IconDownload, IconUpload, IconTag,
-  IconRotateClockwise, IconX, IconChevronDown, IconChevronRight,
-  IconPencil, IconTrashFilled, IconBox, IconPalette, IconWallpaper, IconWorldUpload,
-  IconSettings, IconBug, IconFolder, IconCheck,
+  IconPackage, IconPlus, IconCopy, IconTrash, IconDownload, IconUpload, IconCategoryPlus,
+  IconX, IconChevronDown, IconChevronRight,
+  IconPencil, IconPuzzle, IconSparkles, IconMap,
+  IconSettings, IconBug, IconFolder, IconLayoutGrid, IconLayoutList, IconArrowUpCircle, IconPhoto,
+  IconLoader2, IconPlayerPlay,
 } from "@tabler/icons-react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
-import { MOD_LOADERS } from "./constants"
-import { LoaderIcon } from "./loader-icon"
+import { ModalLayer } from "@/components/ui/modal-layer"
+import { InstanceExportModal } from "./instance-export-modal"
+import { LoaderIcon, loaderLabel } from "./loader-icon"
+import { PlatformBadge } from "@/components/launcher/platform-icon"
+import { CategoryAssignModal } from "@/components/launcher/category-assign-modal"
 import type { Build } from "./types"
 import type { BuildExportCategory } from "@xnlc/types"
+import { IconPickerModal } from "./icon-picker-modal"
+import { usePersistentLayout } from "@/src/hooks/use-persistent-layout"
+import { EntityIcon } from "./entity-icon"
+import { InstanceTrashToast } from "./instance-trash-toast"
+import type { CategoryIconMap } from "@/src/hooks/use-category-icons"
 
 interface InstanceListProps {
   builds: Build[]
@@ -27,47 +35,101 @@ interface InstanceListProps {
   onSetGroup: (id: string, group: string) => void
   onRenameGroup: (oldName: string, newName: string) => void
   onDeleteGroup: (group: string) => void
+  /** Создание категории: только создаёт, вещь не перемещает. */
+  onCreateCategory: (group: string) => void
   onOpen: (id: string) => void
   groups: string[]
   collapsedGroups: Set<string>
   onToggleGroupCollapse: (group: string) => void
+  /** Иконки категорий (имя → src) и их правка — задаются в контекстном меню категории. */
+  categoryIcons: CategoryIconMap
+  onSetCategoryIcon: (group: string, icon: string) => void
+  updatesCountByBuild?: Record<string, number>
 }
 
+const BUILD_DND_MIME = "application/x-xnlc-build-id"
+
 const MODLIST_FORMATS: Array<{ id: "html" | "markdown" | "json" | "csv" | "plaintext"; label: string }> = [
-  { id: "html", label: "HTML" },
-  { id: "markdown", label: "MD" },
-  { id: "json", label: "JSON" },
-  { id: "csv", label: "CSV" },
-  { id: "plaintext", label: "TXT" },
+  { id: "html", label: "fetch failed" },
+  { id: "markdown", label: "fetch failed" },
+  { id: "json", label: "fetch failed" },
+  { id: "csv", label: "fetch failed" },
+  { id: "plaintext", label: "fetch failed" },
 ]
 
-const EXPORT_CATEGORIES: Array<{ id: BuildExportCategory; label: string; description: string; icon: React.ReactNode }> = [
-  { id: "mods", label: "fetch failed", description: "fetch failed", icon: <IconBox className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
-  { id: "resourcepacks", label: "fetch failed", description: "fetch failed", icon: <IconPalette className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
-  { id: "shaderpacks", label: "fetch failed", description: "fetch failed", icon: <IconWallpaper className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
-  { id: "saves", label: "fetch failed", description: "fetch failed", icon: <IconWorldUpload className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
-  { id: "data", label: "fetch failed", description: "fetch failed", icon: <IconSettings className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
-  { id: "logs", label: "fetch failed", description: "logs, crash-reports, .cache, .fabric, .quilt", icon: <IconBug className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
-]
+function buildExportCategories(t: (key: string) => string): Array<{ id: BuildExportCategory; label: string; description: string; icon: React.ReactNode }> {
+  return [
+    { id: "mods", label: t("exportCat.mods"), description: t("exportCat.modsDesc"), icon: <IconPuzzle className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
+    { id: "resourcepacks", label: t("exportCat.resourcepacks"), description: t("exportCat.resourcepacksDesc"), icon: <IconPhoto className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
+    { id: "shaderpacks", label: t("exportCat.shaderpacks"), description: t("exportCat.shaderpacksDesc"), icon: <IconSparkles className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
+    { id: "saves", label: t("exportCat.saves"), description: t("exportCat.savesDesc"), icon: <IconMap className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
+    { id: "data", label: t("exportCat.data"), description: t("exportCat.dataDesc"), icon: <IconSettings className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
+    { id: "logs", label: t("exportCat.logs"), description: t("exportCat.logsDesc"), icon: <IconBug className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
+  ]
+}
 
 export const InstanceList = memo(function InstanceList({
   builds, totalBuilds, onCreate, onDelete, onTrash, onUndoTrash, onDuplicate,
   onExportZip, onExportModlist, onSetGroup, onRenameGroup,
   onDeleteGroup, onOpen, groups, collapsedGroups, onToggleGroupCollapse,
+  categoryIcons, onSetCategoryIcon, onCreateCategory,
+  updatesCountByBuild,
 }: InstanceListProps) {
   const { t } = useTranslation()
+  const exportCategoryOptions = buildExportCategories(t)
   const [trashedName, setTrashedName] = useState<string | null>(null)
+  // Сборка, которую сейчас отправляем в корзину: перемещение папки на диске занимает
+  // время, поэтому плитка сразу гасится и показывает загрузку.
+  const [trashingId, setTrashingId] = useState<string | null>(null)
   const undoTimeoutRef = useRef<number | null>(null)
   const [exportingId, setExportingId] = useState<string | null>(null)
+  const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null)
   const [exportDialogFor, setExportDialogFor] = useState<string | null>(null)
   const [exportCategories, setExportCategories] = useState<Set<BuildExportCategory>>(() => new Set(["mods", "resourcepacks", "shaderpacks", "saves", "data"]))
   const [modlistMenuFor, setModlistMenuFor] = useState<string | null>(null)
-  const [groupEditFor, setGroupEditFor] = useState<string | null>(null)
-  const [groupDraft, setGroupDraft] = useState("")
+  const [assignMenu, setAssignMenu] = useState<{ id: string } | null>(null)
   const [groupContextMenu, setGroupContextMenu] = useState<{ group: string; x: number; y: number } | null>(null)
   const [buildContextMenu, setBuildContextMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [renameGroupFor, setRenameGroupFor] = useState<string | null>(null)
   const [renameGroupDraft, setRenameGroupDraft] = useState("")
+  // Перетаскивание сборки в категорию прямо в списке. Идентификатор держим ещё и
+  // в ref: так drop работает, даже если браузер не отдал dataTransfer (и это
+  // удобно проверять синтетическими событиями).
+  const [dragOverGroup, setDragOverGroup] = useState<string | null>(null)
+  const [draggingBuildId, setDraggingBuildId] = useState<string | null>(null)
+  const draggingBuildIdRef = useRef<string | null>(null)
+  // Категория, для которой сейчас выбирают иконку (null — пикер закрыт).
+  const [iconPickerFor, setIconPickerFor] = useState<string | null>(null)
+  const [layoutMode, changeLayout] = usePersistentLayout("xneon-launcher:buildsLayout")
+
+  /**
+   * Play на карточке сборки: открываем главную с уже выбранным загрузчиком
+   * «Сборка» и этой сборкой, а главная сразу запускает игру — иначе клик
+   * «Играть» выглядел как «ничего не произошло». Подписи главной читаются из
+   * localStorage при её открытии, поэтому порядок «сначала prefs, потом переход»
+   * важен. Флаг авто-запуска одноразовый: главная снимет его сама.
+   */
+  const openBuildOnHome = useCallback((build: Build) => {
+    try {
+      localStorage.setItem("xneon-launcher:lastModLoader", "instance")
+      localStorage.setItem("xneon-launcher:lastVersion", build.name)
+      localStorage.removeItem("xneon-launcher:lastLoaderVersion")
+      localStorage.setItem("xneon-launcher:autoLaunchBuild", build.name)
+    } catch {
+      // localStorage может быть недоступен — переход всё равно делаем.
+    }
+    window.dispatchEvent(new Event("launcher:open-home"))
+  }, [])
+
+  // Прогресс сборки архива из main: иначе экспорт большой сборки выглядел зависанием.
+  useEffect(() => {
+    if (!exportingId) {
+      setExportProgress(null)
+      return
+    }
+    const off = window.electronAPI?.onBuildExportProgress?.((progress) => setExportProgress(progress))
+    return () => off?.()
+  }, [exportingId])
 
   const groupedBuilds = useMemo(() => {
     const map = new Map<string, Build[]>()
@@ -80,24 +142,88 @@ export const InstanceList = memo(function InstanceList({
     return map
   }, [builds])
 
+  // Сколько сборок в каждой категории — показываем в модале категорий.
+  const groupCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const b of builds) {
+      if (b.group) counts[b.group] = (counts[b.group] ?? 0) + 1
+    }
+    return counts
+  }, [builds])
+
   const sortedGroupKeys = useMemo(() => {
-    const keys = Array.from(groupedBuilds.keys())
+    // Плюс созданные категории: пустая категория тоже должна быть видна в списке.
+    const keys = Array.from(new Set<string>([...groupedBuilds.keys(), ...groups]))
     keys.sort((a, b) => {
       if (a === "") return 1
       if (b === "") return -1
       return a.localeCompare(b)
     })
     return keys
-  }, [groupedBuilds])
+  }, [groupedBuilds, groups])
+
+  /**
+   * Во время перетаскивания «Без группы» должно быть доступно как цель сброса,
+   * даже если неcategorized сборок сейчас нет — иначе сборку из категории
+   * нельзя вернуть в общий список.
+   */
+  const dropTargetKeys = useMemo(() => {
+    if (!draggingBuildId) return sortedGroupKeys
+    if (sortedGroupKeys.includes("")) return sortedGroupKeys
+    return [...sortedGroupKeys, ""]
+  }, [sortedGroupKeys, draggingBuildId])
+
+  const handleBuildDragStart = useCallback((event: React.DragEvent, build: Build) => {
+    draggingBuildIdRef.current = build.id
+    setDraggingBuildId(build.id)
+    event.dataTransfer.effectAllowed = "move"
+    event.dataTransfer.setData(BUILD_DND_MIME, build.id)
+    event.dataTransfer.setData("text/plain", build.name)
+  }, [])
+
+  const handleBuildDragEnd = useCallback(() => {
+    draggingBuildIdRef.current = null
+    setDraggingBuildId(null)
+    setDragOverGroup(null)
+  }, [])
+
+  const handleGroupDragOver = useCallback((event: React.DragEvent, groupKey: string) => {
+    const id = draggingBuildIdRef.current ?? event.dataTransfer.getData(BUILD_DND_MIME)
+    if (!id) return
+    // Без preventDefault браузер считает элемент невалидной целью и drop не придёт.
+    event.preventDefault()
+    event.dataTransfer.dropEffect = "move"
+    setDragOverGroup(prev => (prev === groupKey ? prev : groupKey))
+  }, [])
+
+  const handleGroupDrop = useCallback((event: React.DragEvent, groupKey: string) => {
+    const id = event.dataTransfer.getData(BUILD_DND_MIME) || draggingBuildIdRef.current
+    event.preventDefault()
+    event.stopPropagation()
+    draggingBuildIdRef.current = null
+    setDraggingBuildId(null)
+    setDragOverGroup(null)
+    if (!id) return
+    const build = builds.find(b => b.id === id)
+    if (!build) return
+    if ((build.group ?? "") === groupKey) return
+    onSetGroup(id, groupKey)
+  }, [builds, onSetGroup])
 
   const handleTrash = useCallback(async (id: string) => {
     const build = builds.find((b) => b.id === id)
-    const ok = await onTrash(id)
-    if (!ok) return
-    setTrashedName(build?.name ?? "fetch failed")
-    if (undoTimeoutRef.current !== null) window.clearTimeout(undoTimeoutRef.current)
-    undoTimeoutRef.current = window.setTimeout(() => setTrashedName(null), 8000)
-  }, [builds, onTrash])
+    if (trashingId) return
+    setTrashingId(id)
+    try {
+      const ok = await onTrash(id)
+      if (!ok) return
+      setTrashedName(build?.name ?? t("instanceList.build"))
+      if (undoTimeoutRef.current !== null) window.clearTimeout(undoTimeoutRef.current)
+      undoTimeoutRef.current = window.setTimeout(() => setTrashedName(null), 8000)
+    } finally {
+      setTrashingId(null)
+    }
+  }, [builds, onTrash, trashingId])
 
   const handleUndo = useCallback(async () => {
     if (undoTimeoutRef.current !== null) window.clearTimeout(undoTimeoutRef.current)
@@ -109,14 +235,14 @@ export const InstanceList = memo(function InstanceList({
     setExportingId(id)
     try {
       const result = await onExportZip(id, Array.from(exportCategories))
-      if (!result.success && result.error) console.warn("fetch failed", result.error)
+      if (!result.success && result.error) console.warn("[Сборки] Экспорт zip не удался:", result.error)
     } finally { setExportingId(null) }
   }, [onExportZip, exportCategories])
 
   const handleExportModlist = useCallback(async (id: string, format: "html" | "markdown" | "json" | "csv" | "plaintext") => {
     setModlistMenuFor(null)
     const result = await onExportModlist(id, format)
-    if (!result.success && result.error) console.warn("fetch failed", result.error)
+    if (!result.success && result.error) console.warn("[Сборки] Экспорт модлиста не удался:", result.error)
   }, [onExportModlist])
 
   const handleGroupContextMenu = useCallback((e: React.MouseEvent, group: string) => {
@@ -133,7 +259,7 @@ export const InstanceList = memo(function InstanceList({
   }, [renameGroupFor, renameGroupDraft, onRenameGroup])
 
   return (
-    <div className="flex-1 overflow-y-auto relative" onClick={() => { setGroupContextMenu(null); setBuildContextMenu(null) }}>
+    <div className="flex-1 overflow-y-auto relative" onClick={() => { setGroupContextMenu(null); setBuildContextMenu(null); setModlistMenuFor(null) }}>
       {totalBuilds === 0 ? (
         <div className="h-full flex flex-col items-center justify-center text-center">
           <div className="w-20 h-20 rounded-2xl bg-muted/50 flex items-center justify-center mb-5">
@@ -148,10 +274,39 @@ export const InstanceList = memo(function InstanceList({
         </div>
       ) : (
         <div className="flex flex-col gap-1">
-          {sortedGroupKeys.map(groupKey => {
+          {totalBuilds > 0 && (
+            <div className="flex items-center justify-end px-3 pb-2">
+              <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-muted border border-border">
+                <button
+                  type="button"
+                  onClick={() => changeLayout("grid")}
+                  className={cn(
+                    "p-1.5 rounded-md transition-colors",
+                    layoutMode === "grid" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-muted/80",
+                  )}
+                  title={t("instanceList.viewGrid")}
+                >
+                  <IconLayoutGrid className="w-3.5 h-3.5" strokeWidth={1.75} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeLayout("list")}
+                  className={cn(
+                    "p-1.5 rounded-md transition-colors",
+                    layoutMode === "list" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-muted/80",
+                  )}
+                  title={t("instanceList.viewList")}
+                >
+                  <IconLayoutList className="w-3.5 h-3.5" strokeWidth={1.75} />
+                </button>
+              </div>
+            </div>
+          )}
+          {dropTargetKeys.map(groupKey => {
             const groupBuilds = groupedBuilds.get(groupKey) ?? []
             const isCollapsed = groupKey !== "" && collapsedGroups.has(groupKey)
             const displayName = groupKey || t("builds.ungrouped", "fetch failed")
+            const isDropTarget = dragOverGroup === groupKey
 
             return (
               <div key={groupKey || "__ungrouped__"}>
@@ -159,15 +314,26 @@ export const InstanceList = memo(function InstanceList({
                   className={cn(
                     "group flex items-center gap-2 px-3 py-2 rounded-lg transition-colors",
                     groupKey !== "" ? "cursor-pointer hover:bg-muted/50 select-none" : "cursor-default",
+                    // Подсветка категории, в которую сейчас упадёт сборка.
+                    isDropTarget && "bg-primary/10 ring-1 ring-inset ring-primary/40",
                   )}
                   onClick={() => { if (groupKey) onToggleGroupCollapse(groupKey) }}
                   onContextMenu={(e) => { if (groupKey) handleGroupContextMenu(e, groupKey) }}
+                  onDragOver={(e) => handleGroupDragOver(e, groupKey)}
+                  onDragLeave={() => setDragOverGroup(prev => (prev === groupKey ? null : prev))}
+                  onDrop={(e) => handleGroupDrop(e, groupKey)}
+                  title={draggingBuildId ? t("instanceList.dropToCategory") : undefined}
+                  data-category-drop={groupKey || "__ungrouped__"}
                 >
                   {groupKey !== "" ? (
                     isCollapsed
                       ? <IconChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
                       : <IconChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
                   ) : <div className="w-4" />}
+                  {/* Иконку категории задаёт пользователь в контекстном меню категории. */}
+                  {groupKey !== "" && categoryIcons[groupKey] && (
+                    <EntityIcon src={categoryIcons[groupKey]} className="w-4 h-4 shrink-0 rounded p-0.5 text-primary" imgClassName="w-4 h-4 shrink-0 rounded object-contain" />
+                  )}
                   <span className={cn(
                     "text-sm font-semibold",
                     groupKey ? "text-foreground" : "text-muted-foreground italic",
@@ -179,42 +345,66 @@ export const InstanceList = memo(function InstanceList({
                   {groupKey !== "" && (
                     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={(e) => e.stopPropagation()}>
-                      <button type="button" title="fetch failed"
+                      <button type="button" title={t("categoryMenu.icon")}
+                        onClick={() => setIconPickerFor(groupKey)}
+                        className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground">
+                        <IconPhoto className="w-3.5 h-3.5" />
+                      </button>
+                      <button type="button" title={t("instanceList.renameGroup")}
                         onClick={() => { setRenameGroupFor(groupKey); setRenameGroupDraft(groupKey) }}
                         className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground">
                         <IconPencil className="w-3.5 h-3.5" />
                       </button>
-                      <button type="button" title="fetch failed"
+                      <button type="button" title={t("instanceList.deleteGroup")}
                         onClick={() => onDeleteGroup(groupKey)}
                         className="p-1 rounded-md hover:bg-destructive/15 text-muted-foreground hover:text-destructive">
-                        <IconTrashFilled className="w-3.5 h-3.5" />
+                        <IconTrash className="w-3.5 h-3.5" strokeWidth={1.75} />
                       </button>
                     </div>
                   )}
                 </div>
 
-                {!isCollapsed && (
+                {!isCollapsed && layoutMode === "grid" && (
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-3 px-3 pb-4">
                     {groupBuilds.map(build => {
-                      const loader = MOD_LOADERS.find(item => item.id === build.modLoader) ?? MOD_LOADERS[0]
                       const hasImage = !!build.icon
+                      const isLinkedModpack = (build.source === "modrinth" || build.source === "curseforge") && build.locked !== false
+                      const updatesCount = isLinkedModpack ? 0 : (updatesCountByBuild?.[build.id] ?? 0)
+                      const isTrashing = trashingId === build.id
                       return (
                         <div
                           key={build.id}
-                          className="group relative rounded-2xl border border-border bg-card overflow-hidden hover:border-primary/50 hover:shadow-[0_0_20px_var(--glow-primary)] transition-colors cursor-pointer flex flex-col"
-                          onClick={() => onOpen(build.id)}
-                          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setBuildContextMenu({ id: build.id, x: e.clientX, y: e.clientY }) }}
+                          className={cn(
+                            "group relative rounded-2xl border border-border bg-card overflow-hidden hover:border-primary/50 hover:shadow-[0_0_20px_var(--glow-primary)] transition-colors flex flex-col",
+                            isTrashing ? "pointer-events-none opacity-60" : "cursor-pointer",
+                            draggingBuildId === build.id && "opacity-40",
+                          )}
+                          draggable={!isTrashing}
+                          data-build-card={build.id}
+                          onDragStart={e => handleBuildDragStart(e, build)}
+                          onDragEnd={handleBuildDragEnd}
+                          onClick={() => { if (!isTrashing) onOpen(build.id) }}
+                          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setBuildContextMenu({ id: build.id, x: e.clientX, y: e.clientY }); setModlistMenuFor(null) }}
                         >
                           <div className="relative w-full" style={{ paddingBottom: "100%" }}>
                             <div className="absolute inset-0">
                               {hasImage ? (
-                                <img src={build.icon} alt="" className="w-full h-full object-cover" />
+                                <EntityIcon src={build.icon} className="w-full h-full p-[6%] text-primary" imgClassName="w-full h-full object-cover" />
                               ) : (
                                 <div className="w-full h-full bg-gradient-to-br from-primary/20 via-primary/10 to-accent/10 flex items-center justify-center">
-                                  <IconPackage className="w-10 h-10 text-primary/40" />
+                                <LoaderIcon loaderId={build.modLoader} className="w-10 h-10 text-primary/40" />
                                 </div>
                               )}
                             </div>
+                            {updatesCount > 0 && (
+                              <div
+                                className="absolute top-2 right-2 flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-primary-foreground shadow-lg"
+                                title={t("updates.badgeTitle", { count: updatesCount })}
+                              >
+                                <IconArrowUpCircle className="w-3 h-3" strokeWidth={2} />
+                                {updatesCount}
+                              </div>
+                            )}
                             {build.source === "modrinth" && (
                               <div className="absolute top-2 left-2 p-1 rounded-md bg-green-500/20">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24">
@@ -238,14 +428,102 @@ export const InstanceList = memo(function InstanceList({
                                 </svg>
                               </div>
                             )}
+                            {/* Play — внутри области иконки, в правом нижнем углу: так же
+                                выглядит кнопка запуска на плитках серверов. */}
+                            <button
+                              type="button"
+                              title={t("instanceList.playBuild")}
+                              onClick={e => { e.stopPropagation(); if (!isTrashing) openBuildOnHome(build) }}
+                              className="absolute bottom-2 right-2 p-2 rounded-xl bg-primary/80 hover:bg-primary text-primary-foreground shadow-lg shadow-primary/20 backdrop-blur-sm transition-all group-hover:scale-110"
+                            >
+                              <IconPlayerPlay className="w-4 h-4" />
+                            </button>
                           </div>
+                          {/* Удаление: папка сборки перемещается на диске, показываем это */}
+                          {isTrashing && (
+                            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/70 backdrop-blur-sm">
+                              <IconLoader2 className="w-6 h-6 animate-spin text-primary" />
+                              <span className="text-[11px] font-medium text-muted-foreground">{t("instanceList.trashing")}</span>
+                            </div>
+                          )}
                           <div className="px-3 py-2.5 bg-card border-t border-border/50">
                             <p className="text-sm font-semibold text-foreground truncate leading-tight">{build.name}</p>
                             <div className="flex items-center gap-1.5 mt-1">
                               <LoaderIcon loaderId={build.modLoader} className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                              <span className="text-[11px] text-muted-foreground truncate">{loader.name} · {build.version}</span>
+                              <span className="text-[11px] text-muted-foreground truncate">{loaderLabel(build.modLoader)} · {build.version}</span>
                             </div>
                           </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {!isCollapsed && layoutMode === "list" && (
+                  <div className="flex flex-col gap-1 px-3 pb-4">
+                    {groupBuilds.map(build => {
+                      const hasImage = !!build.icon
+                      const isLinkedModpack = (build.source === "modrinth" || build.source === "curseforge") && build.locked !== false
+                      const updatesCount = isLinkedModpack ? 0 : (updatesCountByBuild?.[build.id] ?? 0)
+                      const sourceLabel = build.source === "modrinth" ? "Modrinth" : build.source === "curseforge" ? "CurseForge" : build.source === "ftb" ? "FTB" : null
+                      const isTrashing = trashingId === build.id
+                      return (
+                        <div
+                          key={build.id}
+                          className={cn(
+                            "group flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 hover:border-primary/50 hover:bg-muted/30 transition-colors",
+                            isTrashing ? "pointer-events-none opacity-60" : "cursor-pointer",
+                            draggingBuildId === build.id && "opacity-40",
+                          )}
+                          draggable={!isTrashing}
+                          data-build-card={build.id}
+                          onDragStart={e => handleBuildDragStart(e, build)}
+                          onDragEnd={handleBuildDragEnd}
+                          onClick={() => { if (!isTrashing) onOpen(build.id) }}
+                          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setBuildContextMenu({ id: build.id, x: e.clientX, y: e.clientY }); setModlistMenuFor(null) }}
+                        >
+                          <div className="w-10 h-10 rounded-xl overflow-hidden flex-shrink-0">
+                            {hasImage ? (
+                              <EntityIcon src={build.icon} className="w-full h-full p-0.5 text-primary" imgClassName="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full bg-gradient-to-br from-primary/20 via-primary/10 to-accent/10 flex items-center justify-center">
+                                <LoaderIcon loaderId={build.modLoader} className="w-5 h-5 text-primary/40" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-foreground truncate">{build.name}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <LoaderIcon loaderId={build.modLoader} className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                              <span className="text-[11px] text-muted-foreground truncate">{loaderLabel(build.modLoader)} · {build.version}</span>
+                            </div>
+                          </div>
+                          {build.source && (
+                            <PlatformBadge source={build.source} showLabel className="shrink-0 text-[10px] py-0.5 px-2" iconSize={12} />
+                          )}
+                          {updatesCount > 0 && (
+                            <span
+                              className="shrink-0 flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-primary-foreground"
+                              title={t("updates.badgeTitle", { count: updatesCount })}
+                            >
+                              <IconArrowUpCircle className="w-3 h-3" strokeWidth={2} />
+                              {updatesCount}
+                            </span>
+                          )}
+                          {isTrashing && (
+                            <span className="shrink-0 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                              <IconLoader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                              {t("instanceList.trashing")}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            title={t("instanceList.playBuild")}
+                            onClick={e => { e.stopPropagation(); if (!isTrashing) openBuildOnHome(build) }}
+                            className="shrink-0 p-2 rounded-xl bg-primary/80 hover:bg-primary text-primary-foreground transition-colors"
+                          >
+                            <IconPlayerPlay className="w-4 h-4" />
+                          </button>
                         </div>
                       )
                     })}
@@ -257,15 +535,23 @@ export const InstanceList = memo(function InstanceList({
         </div>
       )}
 
+      {exportingId && (
+        <InstanceExportModal
+          buildName={builds.find(b => b.id === exportingId)?.name ?? ""}
+          current={exportProgress?.current ?? null}
+          total={exportProgress?.total ?? null}
+        />
+      )}
+
       {exportDialogFor && !exportingId && (
         <div className="absolute inset-0 z-30 bg-background/60 backdrop-blur-sm flex items-center justify-center"
           onClick={() => setExportDialogFor(null)}>
           <div className="w-[420px] rounded-2xl border border-border bg-card p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-base font-semibold text-foreground">fetch failed</p>
+                <p className="text-base font-semibold text-foreground">{t("instanceList.exportZip")}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-fetch failed«{builds.find(b => b.id === exportDialogFor)?.name ?? ""}»
+                  {t("instanceList.exportZipDesc", { name: builds.find(b => b.id === exportDialogFor)?.name ?? "" })}
                 </p>
               </div>
               <button type="button" onClick={() => setExportDialogFor(null)} className="p-1 rounded-md hover:bg-muted text-muted-foreground">
@@ -274,7 +560,7 @@ fetch failed«{builds.find(b => b.id === exportDialogFor)?.name ?? ""}»
             </div>
 
             <div className="mt-4 space-y-2">
-              {EXPORT_CATEGORIES.map(cat => (
+              {exportCategoryOptions.map(cat => (
                 <label key={cat.id} className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 px-3 py-2.5 cursor-pointer transition-colors hover:border-primary/40">
                   <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">{cat.icon}</span>
                   <Checkbox
@@ -298,20 +584,20 @@ fetch failed«{builds.find(b => b.id === exportDialogFor)?.name ?? ""}»
             </div>
 
             <div className="mt-5 flex items-center justify-between gap-2">
-              <button type="button" onClick={() => setExportCategories(new Set(EXPORT_CATEGORIES.map(c => c.id)))}
+              <button type="button" onClick={() => setExportCategories(new Set(exportCategoryOptions.map(c => c.id)))}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted">
-fetch failed
+                {t("instanceList.selectAll")}
               </button>
               <div className="flex gap-2">
                 <button type="button" onClick={() => setExportDialogFor(null)}
                   className="px-4 py-2 rounded-xl text-sm font-medium hover:bg-muted text-muted-foreground">
-fetch failed
+                  {t("common.cancel")}
                 </button>
                 <button type="button" disabled={exportCategories.size === 0}
                   onClick={() => { void handleExportZip(exportDialogFor); setExportDialogFor(null) }}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed">
                   {exportingId ? <IconDownload className="w-4 h-4 animate-pulse" /> : <IconDownload className="w-4 h-4" />}
-fetch failed
+                  {t("instanceList.export")}
                 </button>
               </div>
             </div>
@@ -319,67 +605,43 @@ fetch failed
         </div>
       )}
 
-      <Dialog open={!!groupEditFor} onOpenChange={(v) => { if (!v) setGroupEditFor(null) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <IconTag className="w-5 h-5 text-primary" />
-fetch failed
-            </DialogTitle>
-            <DialogDescription>fetch failed</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            {groups.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {groups.map(g => (
-                  <button key={g} type="button"
-                    onClick={() => setGroupDraft(g)}
-                    className={cn(
-                      "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors",
-                      groupDraft === g
-                        ? "bg-primary/15 border-primary text-primary"
-                        : "bg-muted/50 border-border text-muted-foreground hover:border-primary/50 hover:text-foreground",
-                    )}>
-                    {groupDraft === g && <IconCheck className="w-3 h-3" />}
-                    {g}
-                  </button>
-                ))}
-              </div>
-            )}
-            <input autoFocus value={groupDraft} onChange={e => setGroupDraft(e.target.value)}
-              placeholder="fetch failed"
-              onKeyDown={e => {
-                if (e.key === "Enter" && groupEditFor) { onSetGroup(groupEditFor, groupDraft.trim()); setGroupEditFor(null) }
-                if (e.key === "Escape") setGroupEditFor(null)
-              }}
-              className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm outline-none focus:border-primary" />
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setGroupEditFor(null)}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-muted text-muted-foreground">
-fetch failed
-              </button>
-              <button type="button" onClick={() => { if (groupEditFor) { onSetGroup(groupEditFor, groupDraft.trim()); setGroupEditFor(null) } }}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground">
-fetch failed
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Перемещение сборки в категорию — модальное окно категорий */}
+      {assignMenu && (
+        <CategoryAssignModal
+          open
+          itemName={builds.find(b => b.id === assignMenu.id)?.name ?? ""}
+          scope="builds"
+          groups={groups}
+          icons={categoryIcons}
+          counts={groupCounts}
+          current={builds.find(b => b.id === assignMenu.id)?.group ?? ""}
+          onAssign={(group) => { onSetGroup(assignMenu.id, group); setAssignMenu(null) }}
+          onCreate={onCreateCategory}
+          onSetIcon={onSetCategoryIcon}
+          onRename={onRenameGroup}
+          onDelete={onDeleteGroup}
+          onClose={() => setAssignMenu(null)}
+        />
+      )}
 
       {groupContextMenu && (
         <div className="fixed z-50 min-w-[160px] rounded-xl border border-border bg-card shadow-2xl p-1"
           style={{ left: groupContextMenu.x, top: groupContextMenu.y }}
           onClick={e => e.stopPropagation()}>
           <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
+            onClick={() => { setIconPickerFor(groupContextMenu.group); setGroupContextMenu(null) }}>
+            <IconPhoto className="w-4 h-4 text-muted-foreground" />
+            {t("categoryMenu.icon")}
+          </button>
+          <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
             onClick={() => { setRenameGroupFor(groupContextMenu.group); setRenameGroupDraft(groupContextMenu.group); setGroupContextMenu(null) }}>
             <IconPencil className="w-4 h-4 text-muted-foreground" />
-fetch failed
+            {t("instanceList.rename")}
           </button>
           <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-destructive/15 text-destructive"
             onClick={() => { onDeleteGroup(groupContextMenu.group); setGroupContextMenu(null) }}>
-            <IconTrashFilled className="w-4 h-4" />
-fetch failed
+            <IconTrash className="w-4 h-4" strokeWidth={1.75} />
+            {t("instanceList.deleteGroup")}
           </button>
         </div>
       )}
@@ -395,28 +657,28 @@ fetch failed
               setBuildContextMenu(null)
             }}>
             <IconFolder className="w-4 h-4 text-muted-foreground" />
-fetch failed
+            {t("instanceList.openFolder")}
           </button>
           <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
             onClick={() => { void onDuplicate(buildContextMenu.id); setBuildContextMenu(null) }}>
             <IconCopy className="w-4 h-4 text-muted-foreground" />
-fetch failed
+            {t("instanceList.duplicate")}
           </button>
           <button type="button" disabled={exportingId === buildContextMenu.id} className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground disabled:opacity-40"
             onClick={() => { setExportDialogFor(buildContextMenu.id); setExportCategories(new Set(["mods", "resourcepacks", "shaderpacks", "saves", "data"])); setBuildContextMenu(null) }}>
             <IconDownload className="w-4 h-4 text-muted-foreground" />
-fetch failed
+            {t("instanceList.exportZip")}
           </button>
           <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
-            onClick={() => { setModlistMenuFor(buildContextMenu.id); setBuildContextMenu(null) }}>
+            onClick={() => { setModlistMenuFor(prev => prev === buildContextMenu.id ? null : buildContextMenu.id) }}>
             <IconUpload className="w-4 h-4 text-muted-foreground" />
-fetch failed
+            {t("instanceList.exportModlist")}
           </button>
-          {buildContextMenu && modlistMenuFor === buildContextMenu.id && (
+          {modlistMenuFor === buildContextMenu.id && (
             <div className="mx-1 mb-1 rounded-lg bg-muted/50 border border-border p-1 grid grid-cols-3 gap-1">
               {MODLIST_FORMATS.map(format => (
                 <button key={format.id} type="button"
-                  onClick={e => { e.stopPropagation(); void handleExportModlist(buildContextMenu.id, format.id); setBuildContextMenu(null) }}
+                  onClick={e => { e.stopPropagation(); void handleExportModlist(buildContextMenu.id, format.id) }}
                   className="px-2 py-1 text-[11px] rounded-md hover:bg-primary/15 text-muted-foreground hover:text-primary">
                   {format.label}
                 </button>
@@ -424,24 +686,34 @@ fetch failed
             </div>
           )}
           <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
-            onClick={() => { const build = builds.find(b => b.id === buildContextMenu.id); if (build) { setGroupEditFor(buildContextMenu.id); setGroupDraft(build.group ?? "") } setBuildContextMenu(null) }}>
-            <IconTag className="w-4 h-4 text-muted-foreground" />
-fetch failed
+            onClick={() => { setAssignMenu({ id: buildContextMenu.id }); setBuildContextMenu(null) }}>
+            <IconCategoryPlus className="w-4 h-4 text-muted-foreground" />
+            {t("categoryMenu.title")}
           </button>
           <div className="mx-2 my-1 border-t border-border" />
           <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-destructive/15 text-destructive"
             onClick={() => { void handleTrash(buildContextMenu.id); setBuildContextMenu(null) }}>
             <IconTrash className="w-4 h-4" />
-fetch failed
+            {t("instanceList.toTrash")}
           </button>
         </div>
       )}
 
+      {/* Category icon picker: те же встроенные логотипы, что у сборок и серверов */}
+      <IconPickerModal
+        open={iconPickerFor !== null}
+        onOpenChange={(open) => { if (!open) setIconPickerFor(null) }}
+        value={iconPickerFor ? (categoryIcons[iconPickerFor] ?? "") : ""}
+        onChange={(icon) => { if (iconPickerFor) onSetCategoryIcon(iconPickerFor, icon) }}
+        title={t("categoryMenu.icon")}
+        description={t("categoryMenu.iconDesc")}
+        removeLabel={t("categoryMenu.iconRemove")}
+      />
+
       {renameGroupFor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm"
-          onClick={() => setRenameGroupFor(null)}>
-          <div className="w-72 rounded-2xl border border-border bg-card p-4 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <p className="text-sm font-semibold mb-3">fetch failed</p>
+        <ModalLayer className="bg-background/60 backdrop-blur-sm" onClose={() => setRenameGroupFor(null)}>
+          <div className="w-72 rounded-2xl border border-border bg-card p-4 shadow-2xl">
+            <p className="text-sm font-semibold mb-3">{t("instanceList.renameGroup")}</p>
             <input autoFocus value={renameGroupDraft} onChange={e => setRenameGroupDraft(e.target.value)}
               onKeyDown={e => {
                 if (e.key === "Enter") handleRenameGroup()
@@ -449,22 +721,16 @@ fetch failed
               }}
               className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm outline-none focus:border-primary mb-3" />
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setRenameGroupFor(null)} className="px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-muted text-muted-foreground">fetch failed</button>
+              <button type="button" onClick={() => setRenameGroupFor(null)} className="px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-muted text-muted-foreground">{t("common.cancel")}</button>
               <button type="button" onClick={handleRenameGroup}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground">fetch failed</button>
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground">{t("common.save")}</button>
             </div>
           </div>
-        </div>
+        </ModalLayer>
       )}
 
       {trashedName && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-2 shadow-2xl">
-          <p className="text-sm text-foreground"><span className="font-medium">{trashedName}</span>fetch failed</p>
-          <button type="button" onClick={() => void handleUndo()} className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80">
-            <IconRotateClockwise className="w-3.5 h-3.5" />
-fetch failed
-          </button>
-        </div>
+        <InstanceTrashToast name={trashedName} onUndo={() => void handleUndo()} />
       )}
     </div>
   )

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
+import { formatBytes, formatDateTime } from "@/lib/format"
 import {
   IconCamera,
   IconChevronLeft,
@@ -13,22 +15,15 @@ import {
   IconPencil,
 } from "@tabler/icons-react"
 import type { Build, ScreenshotInfo } from "./types"
+import { useAlertDialog } from "@/lib/use-alert-dialog"
+import { ModalLayer } from "@/components/ui/modal-layer"
 
 interface InstanceScreenshotsTabProps {
   build: Build
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `fetch failed`
-  if (bytes < 1024 * 1024) return `fetch failed`
-  return `fetch failed`
-}
-
-function formatDate(ms: number): string {
-  return new Date(ms).toLocaleString("ru-RU", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-}
-
 export function InstanceScreenshotsTab({ build }: InstanceScreenshotsTabProps) {
+  const { t } = useTranslation()
   const [shots, setShots] = useState<ScreenshotInfo[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [viewIndex, setViewIndex] = useState<number | null>(null)
@@ -36,6 +31,7 @@ export function InstanceScreenshotsTab({ build }: InstanceScreenshotsTabProps) {
   const [loadingFull, setLoadingFull] = useState(false)
   const [renameFor, setRenameFor] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState("")
+  const { showAlert, alertDialog } = useAlertDialog()
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -67,12 +63,11 @@ export function InstanceScreenshotsTab({ build }: InstanceScreenshotsTabProps) {
     return () => { cancelled = true }
   }, [viewIndex, shots, build.name])
 
-  // Keyboard navigation in the lightbox: Esc / ← / →
+  // Keyboard navigation in the lightbox: ← / →
   useEffect(() => {
     if (viewIndex === null) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setViewIndex(null)
-      else if (e.key === "ArrowLeft" && viewIndex > 0) setViewIndex(viewIndex - 1)
+      if (e.key === "ArrowLeft" && viewIndex > 0) setViewIndex(viewIndex - 1)
       else if (e.key === "ArrowRight" && shots && viewIndex < shots.length - 1) setViewIndex(viewIndex + 1)
     }
     window.addEventListener("keydown", onKey)
@@ -87,7 +82,7 @@ export function InstanceScreenshotsTab({ build }: InstanceScreenshotsTabProps) {
       if (viewIndex === index) setViewIndex(null)
       await refresh()
     } else {
-      alert(result?.error ?? "fetch failed")
+      showAlert(result?.error ?? t("screenshots.deleteError"))
     }
   }
 
@@ -102,7 +97,7 @@ export function InstanceScreenshotsTab({ build }: InstanceScreenshotsTabProps) {
     if (result?.success) {
       await refresh()
     } else {
-      alert(result?.error ?? "fetch failed")
+      showAlert(result?.error ?? t("screenshots.renameError"))
     }
   }
 
@@ -113,26 +108,40 @@ export function InstanceScreenshotsTab({ build }: InstanceScreenshotsTabProps) {
           <IconLoader2 className="h-6 w-6 animate-spin" />
         </div>
       ) : shots.length === 0 ? (
-        <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-muted/50">
-            <IconCamera className="h-9 w-9 text-muted-foreground/50" strokeWidth={1.5} />
+        // Пустое состояние в том же оформлении, что вкладки «Миры» и «Серверы»:
+        // крупная иконка в цветной плашке, жирный заголовок и действие.
+        <div className="flex h-full flex-col items-center justify-center gap-4 text-center max-w-md mx-auto py-12">
+          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10 text-primary border border-primary/20">
+            <IconCamera className="h-10 w-10" strokeWidth={1.75} />
           </div>
-          <div className="text-lg font-semibold text-foreground">fetch failed</div>
-          <p className="max-w-sm text-sm text-muted-foreground">
-fetch failed
-          </p>
+          <div>
+            <div className="text-xl font-bold text-foreground">{t("screenshots.emptyTitle")}</div>
+            <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
+              {t("screenshots.emptyHint")}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2.5 mt-2">
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              className="flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <IconRefresh className={cn("h-4 w-4", loading && "animate-spin")} strokeWidth={1.75} />
+              {t("common.refresh")}
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="mb-3 flex items-center justify-between">
-            <div className="text-sm font-semibold text-foreground">fetch failed{shots.length}</div>
+            <div className="text-sm font-semibold text-foreground">{t("screenshots.title", { count: shots.length })}</div>
             <button
               type="button"
               onClick={() => void refresh()}
               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <IconRefresh className={cn("h-3.5 w-3.5", loading && "animate-spin")} strokeWidth={1.75} />
-fetch failed
+              {t("common.refresh")}
             </button>
           </div>
 
@@ -161,12 +170,12 @@ fetch failed
                 <div className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-medium text-foreground" title={shot.name}>{shot.name}</div>
-                    <div className="text-[11px] text-muted-foreground">{formatDate(shot.lastModified)} · {formatBytes(shot.sizeBytes)}</div>
+                    <div className="text-[11px] text-muted-foreground">{formatDateTime(shot.lastModified)} · {formatBytes(shot.sizeBytes)}</div>
                   </div>
                   <button
                     type="button"
                     onClick={() => { setRenameDraft(shot.name.replace(/\.[a-zA-Z0-9]+$/, "")); setRenameFor(shot.name) }}
-                    title="fetch failed"
+                    title={t("screenshots.rename.tooltip")}
                     className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
                     <IconPencil className="h-4 w-4" strokeWidth={1.75} />
@@ -174,7 +183,7 @@ fetch failed
                   <button
                     type="button"
                     onClick={() => void handleDelete(index)}
-                    title="fetch failed"
+                    title={t("screenshots.delete.tooltip")}
                     className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                   >
                     <IconTrash className="h-4 w-4" strokeWidth={1.75} />
@@ -189,12 +198,15 @@ fetch failed
 
       {/* Lightbox */}
       {viewIndex !== null && shots && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-sm animate-in fade-in-0">
+        <ModalLayer
+          onClose={() => { if (!renameFor) setViewIndex(null) }}
+          className="flex-col items-stretch justify-start bg-background/95 backdrop-blur-sm animate-in fade-in-0"
+        >
           <div className="flex items-center justify-between px-5 py-3">
             <div className="min-w-0">
               <div className="truncate text-sm font-medium text-foreground">{shots[viewIndex]?.name}</div>
               <div className="text-xs text-muted-foreground">
-                {viewIndex + 1} / {shots.length} · {formatDate(shots[viewIndex]?.lastModified ?? 0)}
+                {viewIndex + 1} / {shots.length} · {formatDateTime(shots[viewIndex]?.lastModified ?? 0)}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -202,7 +214,7 @@ fetch failed
                 type="button"
                 onClick={() => void handleDelete(viewIndex)}
                 className="flex h-9 w-9 items-center justify-center rounded-xl bg-destructive/10 text-destructive transition-colors hover:bg-destructive/20"
-                title="fetch failed"
+                title={t("screenshots.delete.tooltip")}
               >
                 <IconTrash className="h-5 w-5" strokeWidth={1.75} />
               </button>
@@ -210,7 +222,7 @@ fetch failed
                 type="button"
                 onClick={() => window.electronAPI?.openPath(shots[viewIndex]?.path ?? "")}
                 className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                title="fetch failed"
+                title={t("screenshots.openFolder")}
               >
                 <IconFolderOpen className="h-5 w-5" strokeWidth={1.75} />
               </button>
@@ -218,7 +230,7 @@ fetch failed
                 type="button"
                 onClick={() => setViewIndex(null)}
                 className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                title="fetch failed"
+                title={t("screenshots.close")}
               >
                 <IconX className="h-5 w-5" strokeWidth={1.75} />
               </button>
@@ -256,22 +268,22 @@ fetch failed
               </button>
             )}
           </div>
-        </div>
+        </ModalLayer>
       )}
 
       {/* Rename dialog */}
       {renameFor && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-background/70 backdrop-blur-sm animate-in fade-in-0"
-          onClick={() => setRenameFor(null)}
+        <ModalLayer
+          onClose={() => setRenameFor(null)}
+          className="z-[60] bg-background/70 backdrop-blur-sm animate-in fade-in-0"
         >
-          <div className="w-80 rounded-2xl border border-border bg-card p-4 shadow-2xl animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
-            <p className="text-sm font-semibold text-foreground mb-3">fetch failed</p>
+          <div className="w-80 rounded-2xl border border-border bg-card p-4 shadow-2xl animate-in zoom-in-95">
+            <p className="text-sm font-semibold text-foreground mb-3">{t("screenshots.rename.title")}</p>
             <input
               autoFocus
               value={renameDraft}
               onChange={e => setRenameDraft(e.target.value)}
-              placeholder="fetch failed"
+              placeholder={t("screenshots.rename.placeholder")}
               onKeyDown={e => {
                 if (e.key === "Enter") void handleRename(renameFor)
                 if (e.key === "Escape") setRenameFor(null)
@@ -279,18 +291,20 @@ fetch failed
               className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm outline-none focus:border-primary mb-3"
             />
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setRenameFor(null)} className="px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-muted text-muted-foreground">fetch failed</button>
+              <button type="button" onClick={() => setRenameFor(null)} className="px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-muted text-muted-foreground">{t("common.cancel")}</button>
               <button
                 type="button"
                 onClick={() => void handleRename(renameFor)}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground"
               >
-fetch failed
+                {t("screenshots.rename.action")}
               </button>
             </div>
           </div>
-        </div>
+        </ModalLayer>
       )}
+
+      {alertDialog}
     </div>
   )
 }

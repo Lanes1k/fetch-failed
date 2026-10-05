@@ -36,7 +36,7 @@ export class CustomVersionHandler implements ILoaderHandler {
       : path.join(this.customVersionsDir, customVersionPath);
 
     if (!fs.existsSync(resolvedPath)) {
-      throw new Error(`Custom version not found at: ${resolvedPath}`);
+      throw new Error(`fetch failed${resolvedPath}`);
     }
 
     const stats = fs.statSync(resolvedPath);
@@ -70,11 +70,11 @@ export class CustomVersionHandler implements ILoaderHandler {
       versionJsonPath = resolvedPath;
       profileName = path.basename(resolvedPath, ".json");
     } else {
-      throw new Error(`Invalid custom version path: ${resolvedPath}`);
+      throw new Error(`fetch failed${resolvedPath}`);
     }
 
     if (!fs.existsSync(versionJsonPath)) {
-      throw new Error(`Version JSON not found at: ${versionJsonPath}`);
+      throw new Error(`fetch failed${versionJsonPath}`);
     }
 
     let versionJson: VersionJson = JSON.parse(fs.readFileSync(versionJsonPath, "utf-8"));

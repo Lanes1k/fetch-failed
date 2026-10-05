@@ -3,6 +3,7 @@ import type { CSSProperties } from "react"
 import { useTranslation } from "react-i18next"
 import { IconCoffee, IconInfoCircle, IconLayoutGrid, IconNews, IconPhoto, IconRefresh } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
+import { NewsReaderModal } from "@/components/launcher/news-reader-modal"
 import { formatDate, NEWS_CARD_STYLE, NEWS_CARD_TEXT_HEIGHT, NEWS_GRID_GAP, NEWS_GRID_OVERSCAN_ROWS, NEWS_SCROLL_STYLE, type NewsEntry } from "@/lib/home-page-shared"
 
 const REFRESH_INTERVAL = 30 * 60 * 1000
@@ -37,30 +38,39 @@ function writeNewsCache(entries: NewsEntry[]) {
   }
 }
 
-const NewsCard = memo(function NewsCard({ entry, height }: { entry: NewsEntry; height?: number }) {
+const NewsCard = memo(function NewsCard({ entry, height, onRead }: { entry: NewsEntry; height?: number; onRead: (entry: NewsEntry) => void }) {
+  const { t } = useTranslation()
   const imgUrl = entry.playPageImage?.url ?? entry.newsPageImage?.url
   const tag = entry.tag ?? entry.category ?? entry.newsType?.[0]
   const style = useMemo<CSSProperties>(() => (height ? { ...NEWS_CARD_STYLE, height } : NEWS_CARD_STYLE), [height])
   return (
     <div className="group relative overflow-hidden rounded-2xl bg-card border border-border hover:border-primary/40 transition-colors flex flex-col" style={style}>
       <div className="aspect-video w-full overflow-hidden bg-muted/50 flex-shrink-0">
-        {imgUrl ? <img src={imgUrl} alt="fetch failed" loading="lazy" decoding="async" className="w-full h-full object-cover transform-gpu" />
+        {imgUrl ? <img src={imgUrl} alt={entry.title} loading="lazy" decoding="async" className="w-full h-full object-cover transform-gpu" />
           : <div className="w-full h-full flex items-center justify-center"><IconPhoto className="w-10 h-10 text-muted-foreground/30" strokeWidth={1.75} /></div>}
       </div>
       <div className="p-4 flex flex-col gap-2 flex-1">
-        {tag && <span className="self-start px-2 py-0.5 rounded-md bg-primary/15 text-primary text-[11px] font-semibold uppercase tracking-wide">fetch failed</span>}
-        <p className="font-semibold text-foreground text-sm leading-snug line-clamp-2">fetch failed</p>
-        {entry.text && <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">fetch failed</p>}
+        {tag && <span className="self-start px-2 py-0.5 rounded-md bg-primary/15 text-primary text-[11px] font-semibold uppercase tracking-wide">{tag}</span>}
+        <p className="font-semibold text-foreground text-sm leading-snug line-clamp-2">{entry.title}</p>
+        {entry.text && <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{entry.text}</p>}
         <div className="flex items-center justify-between mt-auto pt-1">
-          <span className="text-xs text-muted-foreground/70">fetch failed</span>
-          {entry.readMoreLink && <button type="button" onClick={() => entry.readMoreLink && window.open(entry.readMoreLink)} className="text-xs text-primary hover:text-primary/80 transition-colors font-medium">fetch failed</button>}
+          <span className="text-xs text-muted-foreground/70">{formatDate(entry.date)}</span>
+          {entry.readMoreLink && (
+            <button
+              type="button"
+              onClick={() => onRead(entry)}
+              className="text-xs text-primary hover:text-primary/80 transition-colors font-medium"
+            >
+              {t("home.readMore")}
+            </button>
+          )}
         </div>
       </div>
     </div>
   )
 })
 
-const VirtualNewsGrid = memo(function VirtualNewsGrid({ entries }: { entries: NewsEntry[] }) {
+const VirtualNewsGrid = memo(function VirtualNewsGrid({ entries, onRead }: { entries: NewsEntry[]; onRead: (entry: NewsEntry) => void }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<number | null>(null)
   const [viewport, setViewport] = useState({ scrollTop: 0, height: 0, width: 0 })
@@ -101,7 +111,7 @@ const VirtualNewsGrid = memo(function VirtualNewsGrid({ entries }: { entries: Ne
   return (
     <div ref={scrollRef} onScroll={scheduleViewportUpdate} className="overflow-y-auto flex-1 px-4 pb-4 pr-5" style={NEWS_SCROLL_STYLE}>
       <div style={{ height: startRow * rowHeight }} />
-      <div className="grid grid-cols-2 gap-3">{visibleEntries.map(entry => <NewsCard key={entry.id} entry={entry} height={cardHeight} />)}</div>
+      <div className="grid grid-cols-2 gap-3">{visibleEntries.map(entry => <NewsCard key={entry.id} entry={entry} height={cardHeight} onRead={onRead} />)}</div>
       <div style={{ height: Math.max(0, (rowCount - endRow) * rowHeight) }} />
     </div>
   )
@@ -127,6 +137,10 @@ export const NewsSection = memo(function NewsSection() {
   const [loading, setLoading] = useState(!cachedNews)
   const [refreshing, setRefreshing] = useState(false)
   const [filter, setFilter] = useState<"all" | "java">("java")
+  // Новость, открытая в читалке: статья показывается модалом внутри окна лаунчера.
+  const [readerEntry, setReaderEntry] = useState<NewsEntry | null>(null)
+  const handleRead = useCallback((entry: NewsEntry) => setReaderEntry(entry), [])
+  const handleReaderClose = useCallback(() => setReaderEntry(null), [])
 
   useEffect(() => {
     if (cachedNews) { setNews(cachedNews); setLoading(false); if (!isNewsCacheFresh()) { fetchNewsDirect().then(setNews).catch(() => {}) }; return }
@@ -196,8 +210,10 @@ export const NewsSection = memo(function NewsSection() {
               <p className="text-sm text-muted-foreground">{t("home.newsError")}</p>
             </div>
           </div>
-        ) : <VirtualNewsGrid entries={filtered} />}
+        ) : <VirtualNewsGrid entries={filtered} onRead={handleRead} />}
       </div>
+
+      <NewsReaderModal entry={readerEntry} onClose={handleReaderClose} />
     </div>
   )
 })

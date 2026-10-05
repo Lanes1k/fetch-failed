@@ -1,9 +1,14 @@
 import { useTranslation } from "react-i18next"
-import { IconDownload, IconInfoCircle, IconLoader2 } from "@tabler/icons-react"
+import { EmptyState } from "@/components/ui/empty-state"
+import { IconDownload, IconInfoCircle, IconLoader2, IconExternalLink } from "@tabler/icons-react"
+import { openProjectPage, projectPageUrl } from "@/lib/project-links"
 import { Spinner } from "./spinner"
 import { formatDownloads } from "./utils"
 import { InstanceBrowseToolbar } from "./instance-browse-toolbar"
+import { CategoryBadge } from "./category-badge"
 import { Pagination } from "./pagination"
+import type { CategoriesDialogCategory } from "./categories-dialog"
+import type { SelectedModCategory } from "./use-mod-search"
 import type { ModSearchResult, ModSort } from "./types"
 
 interface InstanceModrinthProps {
@@ -26,6 +31,9 @@ interface InstanceModrinthProps {
   onPageChange: (page: number) => void
   onOpenDetails: (project: ModSearchResult) => void
   onDownload: (project: ModSearchResult) => void
+  categories?: CategoriesDialogCategory[]
+  selectedCategories?: SelectedModCategory[]
+  onApplyCategories?: (value: SelectedModCategory[]) => void
 }
 
 export function InstanceModrinth({
@@ -48,6 +56,9 @@ export function InstanceModrinth({
   onPageChange,
   onOpenDetails,
   onDownload,
+  categories,
+  selectedCategories,
+  onApplyCategories,
 }: InstanceModrinthProps) {
   const { t } = useTranslation()
 
@@ -66,13 +77,16 @@ export function InstanceModrinth({
         versionOptions={versionOptions}
         selectedModLoader={selectedModLoader}
         setSelectedModLoader={setSelectedModLoader}
+        categories={categories}
+        selectedCategories={selectedCategories}
+        onApplyCategories={onApplyCategories}
       />
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
         {loading ? (
           <Spinner />
         ) : results.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-sm text-muted-foreground">{t("builds.noResults")}</div>
+          <EmptyState title={t("builds.noResults")} className="h-full" />
         ) : (
           <div className="grid gap-3">
             {results.map(project => (
@@ -88,13 +102,24 @@ export function InstanceModrinth({
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">{formatDownloads(project.downloadCount)} {t("builds.downloads")}</span>
                         {project.categories?.slice(0, 3).map(category => (
-                          <span key={category} className="rounded-md bg-primary/10 px-2 py-0.5 text-xs capitalize text-primary">{category}</span>
+                          <CategoryBadge key={category} name={category} source={project.source} />
                         ))}
                       </div>
                     </div>
                   </div>
 
                   <div className="ml-auto flex flex-shrink-0 items-center gap-2">
+                    {projectPageUrl(project, "modpack") && (
+                      <button
+                        type="button"
+                        onClick={() => openProjectPage(project, "modpack")}
+                        title={t("common.openOnSite")}
+                        aria-label={t("common.openOnSite")}
+                        className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        <IconExternalLink className="w-4 h-4" strokeWidth={1.75} />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => onOpenDetails(project)}

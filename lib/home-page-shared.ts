@@ -13,18 +13,7 @@ export type LaunchUiState = {
   totalFiles: number | null
   currentFileName: string | null
 }
-export type NewsEntry = {
-  id: string
-  title: string
-  tag?: string
-  category?: string
-  date: string
-  text?: string
-  readMoreLink?: string
-  playPageImage?: { url?: string }
-  newsPageImage?: { url?: string }
-  newsType?: string[]
-}
+export type NewsEntry = import("@xnlc/types").MinecraftNewsEntry
 export type MinecraftVersionOption = { version: string; stable: boolean; type: string }
 export type VersionVisibility = { showSnapshot: boolean; showBeta: boolean; showAlpha: boolean }
 
@@ -38,13 +27,26 @@ export const MOD_LOADERS = [
   { id: "optifine", name: "OptiFine", color: "bg-green-500" },
   { id: "instance", name: "Instance", color: "bg-blue-500" },
 ] as const
-export const NEWS_CARD_STYLE: CSSProperties = { contain: "layout paint" }
-export const NEWS_SCROLL_STYLE: CSSProperties = { contain: "layout paint", overscrollBehavior: "contain" }
+export const NEWS_CARD_STYLE: CSSProperties = { contain: "fetch failed" }
+export const NEWS_SCROLL_STYLE: CSSProperties = { contain: "fetch failed", overscrollBehavior: "contain" }
 export const NEWS_GRID_GAP = 12
 export const NEWS_CARD_TEXT_HEIGHT = 140
 export const NEWS_GRID_OVERSCAN_ROWS = 3
 export const LAUNCH_RE = /launching|starting|started|spawn|запуск/i
-export const RUNNING_RE = /render|game|world|player/i
+
+/**
+ * Игра реально поднялась: окно создано, звук и атласы инициализированы.
+ * Раньше тут было `/render|game|world|player/i` — слишком широко, из-за чего
+ * лаунчер объявлял «игра запущена», когда процесс только-только стартовал.
+ */
+export const GAME_READY_RE = /Sound engine started|OpenAL initialized|Created: \d+x\d+x\d+ .*-atlas|Narrator library for .* successfully loaded/i
+
+/**
+ * Страховка на случай нестандартной сборки, которая не печатает маркеры выше:
+ * через это время живой процесс всё равно считается запущенной игрой, иначе
+ * кнопка навсегда осталась бы в состоянии «Запускается...».
+ */
+export const GAME_READY_FALLBACK_MS = 45_000
 export const INITIAL_LAUNCH_UI_STATE: LaunchUiState = {
   isLaunching: false,
   status: "",
@@ -58,8 +60,8 @@ export const INITIAL_LAUNCH_UI_STATE: LaunchUiState = {
 }
 export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   elyby: "Ely.By",
-  xnskins: "XN Skins",
-  xneon: "XN Skins",
+  xnskins: "fetch failed",
+  xneon: "fetch failed",
   microsoft: "Microsoft",
   offline: "Offline",
 }
@@ -92,7 +94,7 @@ export async function fetchVersionsFromRenderer(): Promise<MinecraftVersionOptio
   // force-cache lets Chromium serve the manifest from its HTTP cache instead of
   // re-downloading it on every start when the IPC fallback path is used.
   const response = await fetch(MOJANG_VERSION_MANIFEST_URL, { cache: "force-cache" })
-  if (!response.ok) throw new Error(`Failed to fetch Mojang manifest: ${response.status}`)
+  if (!response.ok) throw new Error(`fetch failed${response.status}`)
   const data = await response.json() as MojangManifestResponse
   return (data.versions ?? []).map((version) => ({
     version: version.id,
@@ -115,24 +117,39 @@ export function filterMinecraftVersions(
     .map((version) => version.version)
 }
 
-export function getStageLabel(stage?: string, installationPhase?: string) {
-  if (installationPhase) {
-    switch (installationPhase) {
-      case "downloading-vanilla": return "fetch failed"
-      case "downloading-installer": return "fetch failed"
-      case "extracting-installer": return "fetch failed"
-      case "installing-loader": return "fetch failed"
-      case "downloading-libraries": return "fetch failed"
-      case "downloading-assets": return "fetch failed"
-      case "downloading-client": return "fetch failed"
-      case "installing": return "fetch failed"
-      default: return "fetch failed"
-    }
-  }
-  switch (stage) {
-    case "libraries": return "fetch failed"
-    case "assets": return "fetch failed"
-    case "game": return "fetch failed"
-    default: return "fetch failed"
-  }
+/** Переводчик из react-i18next: этапы запуска должны быть локализованы. */
+export type StageTranslate = (key: string, options?: Record<string, unknown>) => string
+
+/**
+ * Фазы установки из main-процесса (`installationPhase`). Отдельная фаза
+ * `removing-previous-loader` приходит, когда перед запуском удаляется профиль
+ * прежнего загрузчика — иначе при смене версии пользователь видел только
+ * «устанавливается загрузчик» и не понимал, куда делся старый.
+ */
+const INSTALLATION_PHASE_KEYS: Record<string, string> = {
+  "downloading-vanilla": "launchStage.downloadingVanilla",
+  "downloading-installer": "launchStage.downloadingInstaller",
+  "extracting-installer": "launchStage.extractingInstaller",
+  "removing-previous-loader": "launchStage.removingPreviousLoader",
+  "installing-loader": "launchStage.installingLoader",
+  "downloading-libraries": "launchStage.downloadingLibraries",
+  "downloading-assets": "launchStage.downloadingAssets",
+  "downloading-client": "launchStage.downloadingClient",
+  "installing": "launchStage.installing",
+}
+
+/** Этапы обычной загрузки, которые приходят в `type` у прогресса. */
+const STAGE_KEYS: Record<string, string> = {
+  libraries: "launchStage.downloadingLibraries",
+  assets: "launchStage.downloadingAssets",
+  game: "launchStage.downloadingGame",
+}
+
+export function getStageLabel(stage: string | undefined, installationPhase: string | undefined, t: StageTranslate) {
+  const key = installationPhase
+    ? INSTALLATION_PHASE_KEYS[installationPhase]
+    : stage
+      ? STAGE_KEYS[stage]
+      : undefined
+  return t(key ?? "launchStage.preparing")
 }

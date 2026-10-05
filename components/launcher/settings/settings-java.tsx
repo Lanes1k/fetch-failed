@@ -1,7 +1,8 @@
 import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
-import { IconCheck, IconFolderPlus, IconLoader2, IconX } from "@tabler/icons-react"
+import { ModalLayer } from "@/components/ui/modal-layer"
+import { IconCheck, IconFolderPlus, IconLoader2, IconRefresh, IconX } from "@tabler/icons-react"
 import type { JavaInstallation } from "./types"
 
 interface SettingsJavaProps {
@@ -16,14 +17,16 @@ interface SettingsJavaProps {
   detectedJavaInstallations: JavaInstallation[]
   loadingJavaInstallations: boolean
   onPickJavaFile: () => Promise<void>
+  /** Принудительно перечитать список установленных Java (мимо кэша main). */
+  onRefreshJava: () => void
 }
 
 const autoVersions = [
-  { version: "8", label: "Java 8" },
-  { version: "11", label: "Java 11" },
-  { version: "16", label: "Java 16" },
-  { version: "21", label: "Java 21" },
-  { version: "26", label: "Java 26" },
+  { version: "8", label: "fetch failed" },
+  { version: "11", label: "fetch failed" },
+  { version: "16", label: "fetch failed" },
+  { version: "21", label: "fetch failed" },
+  { version: "26", label: "fetch failed" },
 ]
 
 export function SettingsJava({
@@ -38,6 +41,7 @@ export function SettingsJava({
   detectedJavaInstallations,
   loadingJavaInstallations,
   onPickJavaFile,
+  onRefreshJava,
 }: SettingsJavaProps) {
   const { t } = useTranslation()
   return (
@@ -92,7 +96,10 @@ export function SettingsJava({
       </div>
 
       {showJavaModal && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in-0">
+        <ModalLayer
+          onClose={() => { setShowJavaModal(false); setEditingJavaVersion("") }}
+          className="bg-background/80 backdrop-blur-sm animate-in fade-in-0"
+        >
           <div className="w-full max-w-lg p-6 rounded-2xl bg-card border border-border shadow-2xl animate-in zoom-in-95 slide-in-from-bottom-4">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-semibold text-foreground">{editingJavaVersion ? `Java ${editingJavaVersion}` : t("settings.java.selectJavaPath")}</h3>
@@ -139,7 +146,19 @@ export function SettingsJava({
                 </div>
               ) : detectedJavaInstallations.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground px-1">{t("settings.java.detected")}</div>
+                  <div className="flex items-center justify-between px-1">
+                    <div className="text-xs font-medium text-muted-foreground">{t("settings.java.detected")}</div>
+                    <button
+                      type="button"
+                      onClick={() => onRefreshJava()}
+                      title={t("common.refresh")}
+                      aria-label={t("common.refresh")}
+                      className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      <IconRefresh className="h-3 w-3" strokeWidth={1.75} />
+                      {t("common.refresh")}
+                    </button>
+                  </div>
                   <div className="max-h-[304px] space-y-2 overflow-y-auto pr-1">
                     {detectedJavaInstallations.map((java, index) => (
                       <button
@@ -169,7 +188,7 @@ export function SettingsJava({
                         <div className="text-xs text-muted-foreground mt-1 truncate">{java.path}</div>
                         {(java.arch || java.vendor || java.fullVersion) && (
                           <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                            {java.arch && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{java.arch}fetch failed</span>}
+                            {java.arch && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{t("settings.java.archBits", { arch: java.arch })}</span>}
                             {java.vendor && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{java.vendor}</span>}
                             {java.fullVersion && java.fullVersion !== java.version && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{java.fullVersion}</span>}
                           </div>
@@ -200,7 +219,7 @@ export function SettingsJava({
               {t("settings.cancel")}
             </button>
           </div>
-        </div>,
+        </ModalLayer>,
         document.body
       )}
     </>

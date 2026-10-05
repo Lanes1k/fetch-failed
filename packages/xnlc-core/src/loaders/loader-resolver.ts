@@ -133,7 +133,7 @@ export class LoaderResolver {
     onProgress?: DownloadProgressCallback,
   ): Promise<LoaderInstallResult> {
     if (loaderType === "vanilla") {
-      throw new Error("Vanilla does not require loader installation");
+      throw new Error("fetch failed");
     }
     if (loaderType === "custom") {
       return this.getCustomVersionHandler().install(loaderVersion, mcVersion, onProgress);

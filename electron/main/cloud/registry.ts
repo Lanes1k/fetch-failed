@@ -17,7 +17,7 @@ const providers: Record<CloudProviderId, CloudProvider> = {
 
 export function getProvider(id: CloudProviderId): CloudProvider {
   const p = providers[id]
-  if (!p) throw new Error(`Unknown provider: ${id}`)
+  if (!p) throw new Error(`fetch failed${id}`)
   return p
 }
 

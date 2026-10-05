@@ -177,7 +177,7 @@ export class XnlcLoaderService {
     }
 
     const fallbackVersion = await this.resolveDefaultLoaderVersion(selection.mcVersion, "quilt");
-    console.log(`[XNLC] Quilt loader ${selection.loaderVersion} is incompatible with Minecraft ${selection.mcVersion} on Java ${requiredJavaVersion}; using ${fallbackVersion} instead`);
+    console.log(`Quilt loader ${selection.loaderVersion} is incompatible with Minecraft ${selection.mcVersion} on Java ${requiredJavaVersion}; using ${fallbackVersion} instead`);
     return {
       ...selection,
       loaderVersion: fallbackVersion,
@@ -226,7 +226,7 @@ export class XnlcLoaderService {
         break;
     }
 
-    throw new Error(`No ${loaderType} versions found for Minecraft ${mcVersion}`);
+    throw new Error(`No ${loaderType}fetch failed${mcVersion}`);
   }
 
   getProfileName(
@@ -237,6 +237,7 @@ export class XnlcLoaderService {
     const actualLoaderType = this.loaderResolver.determineLoaderType(mcVersion, loaderType, loaderVersion);
     const parsedOptifine = loaderType === "optifine" ? parseOptifineFilename(loaderVersion) : null;
     switch (actualLoaderType) {
+      // Имена профилей — исторический формат `<загрузчик>-<версия>-<mc>`.
       case "neoforge":
         return `neoforge-${loaderVersion}-${mcVersion}`;
       case "forge":

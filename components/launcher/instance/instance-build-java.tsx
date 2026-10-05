@@ -1,31 +1,22 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 import { cn } from "@/lib/utils"
-import { IconFolderPlus, IconLoader2, IconSettings, IconX } from "@tabler/icons-react"
+import { memoryToMb, mbToMemory } from "@/lib/memory"
+import { IconFolderPlus, IconLoader2, IconRefresh, IconSettings, IconX } from "@tabler/icons-react"
 import { MemorySlider } from "@/components/ui/memory-slider"
+import { ModalLayer } from "@/components/ui/modal-layer"
 import { useMemoryOptions } from "@/src/hooks/use-memory-options"
 import type { JavaInstallation } from "@/components/launcher/settings/types"
 import type { Build } from "./types"
+import { useTranslation } from "react-i18next"
 
 interface InstanceBuildJavaProps {
   build: Build
   updateBuild: (id: string, fields: Partial<Build>) => void
 }
 
-function memoryToMb(val?: string): number {
-  if (!val) return 2048
-  const s = val.trim().toUpperCase()
-  if (s.endsWith("G")) return parseInt(s, 10) * 1024
-  if (s.endsWith("M")) return parseInt(s, 10)
-  return parseInt(s, 10) || 2048
-}
-
-function mbToMemory(mb: number): string {
-  if (mb >= 1024 && mb % 1024 === 0) return `${mb / 1024}G`
-  return `${mb}M`
-}
-
 export function InstanceBuildJava({ build, updateBuild }: InstanceBuildJavaProps) {
+  const { t } = useTranslation()
   const [detected, setDetected] = useState<JavaInstallation[]>([])
   const [loadingDetect, setLoadingDetect] = useState(false)
   const [showJavaModal, setShowJavaModal] = useState(false)
@@ -33,17 +24,27 @@ export function InstanceBuildJava({ build, updateBuild }: InstanceBuildJavaProps
   const override = build.javaOverride === true
   const isAuto = !build.javaPath || build.javaPath === ""
 
+  /**
+   * Список установленных Java кэшируется в main-процессе (скан реестра и
+   * запуск java.exe стоят секунды). force — принудительное обновление из кнопки
+   * «Обновить»: пользователь мог поставить новую Java уже после открытия окна.
+   */
+  const loadJavaInstallations = useCallback(async (force = false) => {
+    setLoadingDetect(true)
+    try {
+      const list = await window.electronAPI?.detectJavaInstallations(force)
+      setDetected(list ?? [])
+    } catch {
+      setDetected([])
+    } finally {
+      setLoadingDetect(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!showJavaModal || detected.length > 0) return
-    let cancelled = false
-    setLoadingDetect(true)
-    window.electronAPI?.detectJavaInstallations().then(list => {
-      if (!cancelled) setDetected(list ?? [])
-    }).catch(() => {}).finally(() => {
-      if (!cancelled) setLoadingDetect(false)
-    })
-    return () => { cancelled = true }
-  }, [showJavaModal, detected.length])
+    void loadJavaInstallations()
+  }, [showJavaModal, detected.length, loadJavaInstallations])
 
   const handlePickJavaFile = async () => {
     const picked = await window.electronAPI?.pickJavaFile()
@@ -54,7 +55,7 @@ export function InstanceBuildJava({ build, updateBuild }: InstanceBuildJavaProps
   }
 
   const selectedLabel = isAuto
-    ? "fetch failed"
+    ? t("build.java.auto")
     : detected.find(j => j.path === build.javaPath)?.label || build.javaPath?.split(/[\\/]/).pop() || build.javaPath
 
   const { maxMb, snapPoints } = useMemoryOptions()
@@ -64,11 +65,11 @@ export function InstanceBuildJava({ build, updateBuild }: InstanceBuildJavaProps
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
-            <IconSettings className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} />
-fetch failed
+            <IconSettings className="h-5 w-5 text-primary" strokeWidth={1.75} />
+            {t("build.java.title")}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-fetch failed
+            {t("build.java.desc")}
           </p>
         </div>
         <button
@@ -80,16 +81,16 @@ fetch failed
           )}
         >
           <span className={cn("w-2 h-2 rounded-full", override ? "bg-primary-foreground" : "bg-muted-foreground/50")} />
-          {override ? "fetch failed" : "fetch failed"}
+          {override ? t("build.java.overrideOn") : t("build.java.useLauncher")}
         </button>
       </div>
 
       {override && (
         <div className="mt-6 grid gap-6">
           <div>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">fetch failed</label>
+            <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("build.java.memory")}</label>
             <div className="rounded-xl border border-border bg-muted/30 p-5 space-y-2.5">
-              <label className="block text-sm font-medium text-foreground">fetch failed</label>
+              <label className="block text-sm font-medium text-foreground">{t("build.java.allocated")}</label>
               <MemorySlider
                 value={memoryToMb(build.memoryMax)}
                 min={512}
@@ -100,12 +101,12 @@ fetch failed
                 unit="MB"
                 onChange={(v) => updateBuild(build.id, { memoryMax: mbToMemory(v) })}
               />
-              <p className="text-xs text-muted-foreground">fetch failed</p>
+              <p className="text-xs text-muted-foreground">{t("build.java.memoryDesc")}</p>
             </div>
           </div>
 
           <div>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">fetch failed</label>
+            <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("build.java.path")}</label>
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -123,38 +124,50 @@ fetch failed
                 className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-border bg-muted/20 px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
               >
                 <IconFolderPlus className="h-4 w-4" strokeWidth={1.75} />
-fetch failed
+                {t("build.java.pickFile")}
               </button>
             </div>
           </div>
 
           <div>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">fetch failed</label>
+            <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("build.java.jvmArgs")}</label>
             <textarea
               value={build.javaArgs ?? ""}
               onChange={e => updateBuild(build.id, { javaArgs: e.target.value })}
               rows={3}
-              placeholder="-XX:+UseG1GC -XX:MaxGCPauseMillis=50"
+              placeholder="fetch failed"
               className="w-full resize-none rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary"
             />
             <p className="mt-1.5 text-xs text-muted-foreground">
-fetch failed
+              {t("build.java.argsHint")}
             </p>
           </div>
         </div>
       )}
 
       {showJavaModal && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in-0">
+        <ModalLayer onClose={() => setShowJavaModal(false)} className="bg-background/80 backdrop-blur-sm animate-in fade-in-0">
           <div className="w-full max-w-lg p-6 rounded-2xl bg-card border border-border shadow-2xl animate-in zoom-in-95 slide-in-from-bottom-4">
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-semibold text-foreground">fetch failed</h3>
-              <button
-                onClick={() => setShowJavaModal(false)}
-                className="w-8 h-8 rounded-lg bg-muted/50 hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <IconX className="w-5 h-5" strokeWidth={1.5} />
-              </button>
+              <h3 className="text-lg font-semibold text-foreground">{t("build.java.path")}</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void loadJavaInstallations(true)}
+                  disabled={loadingDetect}
+                  title={t("common.refresh")}
+                  aria-label={t("common.refresh")}
+                  className="w-8 h-8 rounded-lg bg-muted/50 hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                >
+                  <IconRefresh className={cn("w-4 h-4", loadingDetect && "animate-spin")} strokeWidth={1.5} />
+                </button>
+                <button
+                  onClick={() => setShowJavaModal(false)}
+                  className="w-8 h-8 rounded-lg bg-muted/50 hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <IconX className="w-5 h-5" strokeWidth={1.5} />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3 mb-4">
@@ -171,25 +184,25 @@ fetch failed
                 )}
               >
                 <div className="flex items-center justify-between">
-                  <div className="font-medium text-foreground">fetch failed</div>
+                  <div className="font-medium text-foreground">{t("build.java.auto")}</div>
                   <span className={cn(
                     "text-xs px-2 py-1 rounded-md font-medium",
                     isAuto ? "bg-primary/20 text-primary" : "bg-muted/50 text-muted-foreground"
                   )}>
-                    {isAuto ? "fetch failed" : "fetch failed"}
+                    {isAuto ? t("build.java.selected") : t("build.java.choose")}
                   </span>
                 </div>
-                <div className="text-xs text-muted-foreground mt-1">fetch failed</div>
+                <div className="text-xs text-muted-foreground mt-1">{t("build.java.autoDesc")}</div>
               </button>
 
               {loadingDetect ? (
                 <div className="w-full p-4 rounded-xl border border-border bg-muted/30 flex items-center justify-center gap-2">
                   <IconLoader2 className="w-4 h-4 animate-spin text-primary" strokeWidth={1.5} />
-                  <span className="text-sm text-muted-foreground">fetch failed</span>
+                  <span className="text-sm text-muted-foreground">{t("build.java.searching")}</span>
                 </div>
               ) : detected.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground px-1">fetch failed</div>
+                  <div className="text-xs font-medium text-muted-foreground px-1">{t("build.java.detected")}</div>
                   <div className="max-h-[304px] space-y-2 overflow-y-auto pr-1">
                     {detected.map((java, index) => (
                       <button
@@ -211,7 +224,7 @@ fetch failed
                             "shrink-0 text-xs px-2 py-1 rounded-md font-medium",
                             build.javaPath === java.path ? "bg-primary/20 text-primary" : "bg-muted/50 text-muted-foreground"
                           )}>
-                            {build.javaPath === java.path ? "fetch failed" : "fetch failed"}
+                            {build.javaPath === java.path ? t("build.java.selected") : t("build.java.choose")}
                           </span>
                         </div>
                         <div className="text-xs text-muted-foreground mt-1 truncate">{java.path}</div>
@@ -227,9 +240,9 @@ fetch failed
               >
                 <div className="flex items-center gap-2">
                   <IconFolderPlus className="w-5 h-5" strokeWidth={1.5} />
-                  <span className="text-sm">fetch failed</span>
+                  <span className="text-sm">{t("build.java.pickFile")}</span>
                 </div>
-                <span className="text-xs px-2 py-1 rounded-md bg-muted/50 font-medium">fetch failed</span>
+                <span className="text-xs px-2 py-1 rounded-md bg-muted/50 font-medium">{t("build.java.choose")}</span>
               </button>
             </div>
 
@@ -238,10 +251,10 @@ fetch failed
               className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-xl border border-border bg-muted/30 hover:bg-muted/50 text-foreground text-sm transition-colors"
             >
               <IconX className="w-4 h-4" strokeWidth={1.75} />
-fetch failed
+              {t("common.cancel")}
             </button>
           </div>
-        </div>,
+        </ModalLayer>,
         document.body
       )}
     </div>

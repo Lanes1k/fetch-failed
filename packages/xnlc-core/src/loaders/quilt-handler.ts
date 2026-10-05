@@ -46,7 +46,7 @@ export class QuiltHandler implements ILoaderHandler {
     const metaIntermediary = await this.loaderMetaClient.getVersion("net.fabricmc.intermediary", mcVersion);
 
     if (!metaQuilt || !metaIntermediary) {
-      throw new Error(`Quilt components not found in loader meta for MC ${mcVersion}`);
+      throw new Error(`fetch failed${mcVersion}`);
     }
 
     // 2. Fetch Base Minecraft JSON

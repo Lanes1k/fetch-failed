@@ -85,13 +85,13 @@ export async function importLauncherInstance(instance: LauncherInstance) {
     sendImportProgress(0, 100, "fetch failed", instance.name)
     await copyDirContents([srcRoot], intentPath, (copied, total) => {
       const percent = total > 0 ? Math.round((copied / total) * 100) : 90
-      sendImportProgress(percent, 100, `fetch failed`, instance.name)
+      sendImportProgress(percent, 100, `fetch failed${copied}/${total})...`, instance.name)
     })
     sendImportProgress(90, 100, "fetch failed", instance.name)
     const scanned = await scanIntentDir(intentPath, (done, total) => {
       const fraction = total > 0 ? done / total : 0
       const percent = Math.round(90 + fraction * 10)
-      sendImportProgress(percent, 100, `fetch failed`, instance.name)
+      sendImportProgress(percent, 100, `fetch failed${done}/${total})...`, instance.name)
     })
 
     // Read icon
@@ -99,18 +99,18 @@ export async function importLauncherInstance(instance: LauncherInstance) {
 
     const sourceNames: Record<string, string> = {
       gdlauncher: "GDLauncher",
-      prism: "Prism Launcher",
+      prism: "fetch failed",
       multimc: "MultiMC",
       polymc: "PolyMC",
       astralrinth: "AstralRinth",
-      xlauncher: "X Launcher",
-      modrinthapp: "Modrinth App",
+      xlauncher: "fetch failed",
+      modrinthapp: "fetch failed",
     }
 
     return {
       id: randomUUID(),
       name: instance.name,
-      description: `fetch failed`,
+      description: `fetch failed${sourceNames[instance.source] || instance.source}`,
       version: instance.version,
       modLoader: instance.modLoader,
       loaderVersion: instance.loaderVersion,

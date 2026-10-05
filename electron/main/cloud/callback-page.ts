@@ -113,7 +113,7 @@ export function callbackSuccessPage(provider: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>fetch failed</title>
+  <title>${provider} fetch failed</title>
   <style>${LAUNCHER_STYLES}</style>
 </head>
 <body>
@@ -126,7 +126,7 @@ export function callbackSuccessPage(provider: string): string {
         <polyline points="22 4 12 14.01 9 11.01"/>
       </svg>
     </div>
-    <h1>fetch failed</h1>
+    <h1>${provider} fetch failed</h1>
     <p>fetch failed<br>fetch failed</p>
     <button class="btn" onclick="window.close()">fetch failed</button>
   </div>
@@ -155,7 +155,7 @@ export function callbackErrorPage(provider: string, error?: string): string {
       </svg>
     </div>
     <h1>fetch failed</h1>
-    <p>fetch failed</p>
+    <p>fetch failed ${provider}</p>
     ${error ? `<div class="error-detail">${error}</div>` : ""}
     <button class="btn btn-secondary" onclick="window.close()">fetch failed</button>
   </div>

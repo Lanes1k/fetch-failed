@@ -1,11 +1,12 @@
+import { toErrorMessage, opFailure } from "../../errors"
 import fs from "fs/promises"
 import path from "path"
 import type { CloudProvider, CloudAuthResult, CloudFileListResult, CloudUploadResult, CloudDownloadResult, CloudStorageQuota, CloudFileInfo } from "../provider"
 import { createClient } from "webdav"
-import { dbHelpers } from "../../../db"
+import { readCloudToken, writeCloudToken, clearCloudToken } from "../token-store"
 
-const BASE_FOLDER = "Xneon Launcher"
-const SUB_FOLDERS = ["builds", "accounts"]
+const BASE_FOLDER = "fetch failed"
+const SUB_FOLDERS = ["builds", "accounts", "servers"]
 
 type WebDavConfig = {
   url: string
@@ -16,18 +17,8 @@ type WebDavConfig = {
 let cachedClient: ReturnType<typeof createClient> | null = null
 let cachedConfig: WebDavConfig | null = null
 
-async function readConfig(): Promise<WebDavConfig | null> {
-  try {
-    const raw = await dbHelpers.getCloudConfig("webdav")
-    if (raw) return JSON.parse(raw) as WebDavConfig
-  } catch { /* noop */ }
-  return null
-}
-
-async function writeConfig(config: WebDavConfig): Promise<void> {
-  const raw = JSON.stringify(config)
-  await dbHelpers.setCloudConfig("webdav", raw)
-}
+const readConfig = () => readCloudToken<WebDavConfig>("webdav")
+const writeConfig = (config: WebDavConfig) => writeCloudToken("webdav", config)
 
 async function getClient(): Promise<ReturnType<typeof createClient> | null> {
   const config = await readConfig()
@@ -64,25 +55,27 @@ export class WebDavProvider implements CloudProvider {
       cachedConfig = config
       return { success: true, provider: "webdav" }
     } catch (e) {
-      return { success: false, error: `fetch failed` }
+      return { success: false, error: `fetch failed${toErrorMessage(e)}` }
     }
   }
 
   async isAuthenticated(): Promise<boolean> {
-    const client = await getClient()
-    if (!client) return false
-    try { await client.stat("/"); return true } catch { return false }
+    // Быстрая локальная проверка: конфиг сохранён => провайдер подключён.
+    // Сетевой stat() выполняется лениво при реальных операциях, чтобы не
+    // блокировать рендер страницы Cloud.
+    const config = await readConfig()
+    return config !== null
   }
 
   async logout(): Promise<void> {
-    try { await dbHelpers.removeCloudConfig("webdav") } catch { /* noop */ }
+    await clearCloudToken("webdav")
     cachedClient = null
     cachedConfig = null
   }
 
   async ensureBaseFolder(): Promise<void> {
     const client = await getClient()
-    if (!client) throw new Error("Not configured")
+    if (!client) throw new Error("fetch failed")
     await ensureFolder(client, `/${BASE_FOLDER}`)
     for (const sub of SUB_FOLDERS) {
       await ensureFolder(client, `/${BASE_FOLDER}/${sub}`)
@@ -91,7 +84,7 @@ export class WebDavProvider implements CloudProvider {
 
   async listFiles(folderPath?: string): Promise<CloudFileListResult> {
     const client = await getClient()
-    if (!client) return { success: false, error: "Not configured" }
+    if (!client) return { success: false, error: "fetch failed" }
     try {
       const targetPath = folderPath ? `/${BASE_FOLDER}/${folderPath}` : `/${BASE_FOLDER}`
       const items = await client.getDirectoryContents(targetPath) as any[]
@@ -102,12 +95,12 @@ export class WebDavProvider implements CloudProvider {
         category: f.type === "directory" ? undefined : (folderPath || "builds"),
       }))
       return { success: true, files }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async uploadFile(localPath: string, remotePath: string, onProgress?: (percent: number) => void): Promise<CloudUploadResult> {
     const client = await getClient()
-    if (!client) return { success: false, error: "Not configured" }
+    if (!client) return { success: false, error: "fetch failed" }
     try {
       const fileName = path.basename(localPath)
       const dirParts = remotePath.split("/").slice(0, -1).filter(Boolean)
@@ -130,31 +123,31 @@ export class WebDavProvider implements CloudProvider {
         filePath: localPath,
         onProgress,
       })
-      if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+      if (!res.ok) throw new Error(`fetch failed${res.status}`)
       return { success: true, id: destPath, name: fileName }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async downloadFile(remotePath: string, localPath: string): Promise<CloudDownloadResult> {
     const client = await getClient()
-    if (!client) return { success: false, error: "Not configured" }
+    if (!client) return { success: false, error: "fetch failed" }
     try {
       const srcPath = `/${BASE_FOLDER}/${remotePath}`
       const content = await client.getFileContents(srcPath) as ArrayBuffer
       await fs.mkdir(path.dirname(localPath), { recursive: true })
       await fs.writeFile(localPath, Buffer.from(content))
       return { success: true, localPath }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async deleteFile(remotePath: string): Promise<{ success: boolean; error?: string }> {
     const client = await getClient()
-    if (!client) return { success: false, error: "Not configured" }
+    if (!client) return { success: false, error: "fetch failed" }
     try {
       const srcPath = `/${BASE_FOLDER}/${remotePath}`
       await client.deleteFile(srcPath)
       return { success: true }
-    } catch (e) { return { success: false, error: e instanceof Error ? e.message : String(e) } }
+    } catch (e) { return opFailure(e) }
   }
 
   async getStorageQuota(): Promise<CloudStorageQuota | null> {

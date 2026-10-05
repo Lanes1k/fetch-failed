@@ -2,11 +2,13 @@ export type {
   ContentType,
   ModSort,
   ModSource,
+  ModEnvironment,
   ModLoaderFilter,
   ModSearchResult,
   ModSearchResponse,
   ModDetails,
   ModVersion,
+  ModLinks,
   ModSortOption,
   ModDependency,
   ModProjectInfo,
@@ -29,12 +31,15 @@ export {
   modrinthGetDetails,
   modrinthGetVersions,
   modrinthGetProjectInfo,
+  modrinthGetProjectsByIds,
   modrinthGetRawVersions,
   modrinthGetFileByHash,
   modrinthGetFilesByHash,
   modrinthGetCategories,
   modrinthGetLoaders,
   modrinthGetGameVersions,
+  modrinthCheckUpdates,
+  modrinthGetVersionsByIds,
 } from "./modrinth-client.js"
 
 export {
@@ -45,13 +50,18 @@ export {
   curseforgeFeatured,
   curseforgeGetDownloadUrl,
   curseforgeGetProjectInfo,
+  curseforgeGetProjectsByIds,
   curseforgeGetFingerprintsMatches,
   curseforgeGetCategories,
+  curseforgeGetChangelog,
+  curseforgeGetDescription,
+  curseforgeGetFiles,
 } from "./curseforge-client.js"
 
 export type {
   CurseforgeFingerprintMatch,
   CurseforgeFingerprintsResult,
+  CurseForgeFileInfo,
 } from "./curseforge-client.js"
 
 export {
@@ -60,6 +70,10 @@ export {
   ftbGetDetailsVersion,
   ftbSearchModpacks,
   ftbFeaturedModpacks,
+  ftbCatalog,
+  ftbCatalogFacets,
+  splitFtbTags,
+  setFtbCatalogCacheFile,
   ftbGetModpack,
   ftbGetModpackVersion,
   ftbGetModpackChangelog,

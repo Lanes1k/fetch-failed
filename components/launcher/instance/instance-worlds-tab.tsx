@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
+import { formatBytes, formatDateTime, formatPlaytime } from "@/lib/format"
 import {
   IconArchive,
   IconCopy,
@@ -14,34 +16,25 @@ import {
   IconTrash,
   IconUpload,
   IconX,
+  IconCheck,
+  IconList,
 } from "@tabler/icons-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Checkbox } from "@/components/ui/checkbox"
+import { formatDownloads } from "./utils"
+import { Pagination } from "./pagination"
+import { EmptyState } from "@/components/ui/empty-state"
 import { InstanceModal } from "./instance-modal"
-import type { Build, DatapackInfo, ModalTab, ModDetails, ModSearchResult, ModVersion, Source, WorldInfo } from "./types"
+import { CategoryBadge } from "./category-badge"
+import { ModalLayer } from "@/components/ui/modal-layer"
+import { useAlertDialog } from "@/lib/use-alert-dialog"
+import type { Build, DatapackInfo, ModalTab, ModDetails, ModSearchResult, ModVersion, Source, WorldInfo, ModSort } from "./types"
 
-interface InstanceWorldsTabProps {
-  build: Build
-}
+// CurseForge отдаёт категории карт (classId 17) вместе с их названиями и иконками.
+// Ничего не переводим и не генерируем — берём как есть из API.
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `fetch failed`
-  if (bytes < 1024 * 1024) return `fetch failed`
-  if (bytes < 1024 * 1024 * 1024) return `fetch failed`
-  return `fetch failed`
-}
-
-function formatDate(ms: number): string {
-  if (!ms) return "—"
-  return new Date(ms).toLocaleString("ru-RU", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-}
-
-function formatPlaytime(seconds: number): string {
-  if (!seconds) return "—"
-  if (seconds < 60) return `fetch failed`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `fetch failed`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `fetch failed`
-  return `fetch failed`
+interface InstanceWorldsTabProps {  build: Build
 }
 
 async function readFileAsDataUrl(file: File): Promise<string> {
@@ -58,10 +51,31 @@ function copyToClipboard(text: string): void {
 }
 
 export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
+  const { t } = useTranslation()
   const [worlds, setWorlds] = useState<WorldInfo[] | null>(null)
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
   const [datapacks, setDatapacks] = useState<DatapackInfo[]>([])
   const [loading, setLoading] = useState(false)
+
+  // Режим просмотра: «Установленные миры» или «Каталог карт»
+  const [viewMode, setViewMode] = useState<"installed" | "catalog">("installed")
+
+  // Каталог карт CurseForge
+  const [mapSearch, setMapSearch] = useState("")
+  const [mapSort, setMapSort] = useState<ModSort>("downloads")
+  const [selectedMapCategories, setSelectedMapCategories] = useState<string[]>([])
+  const [draftMapCategories, setDraftMapCategories] = useState<string[]>([])
+  const [mapCatDialogOpen, setMapCatDialogOpen] = useState(false)
+  const [mapCategories, setMapCategories] = useState<Array<{ slug: string; name: string; icon: string; header: string }>>([])
+  const [mapCategoriesLoading, setMapCategoriesLoading] = useState(false)
+  const [filterBuildVersion, setFilterBuildVersion] = useState(false)
+  const [mapResults, setMapResults] = useState<ModSearchResult[]>([])
+  const [mapTotalHits, setMapTotalHits] = useState(0)
+  const [mapLoading, setMapLoading] = useState(false)
+  const [mapPage, setMapPage] = useState(1)
+  const [installingMapId, setInstallingMapId] = useState<string | null>(null)
+  const [installedMapIds, setInstalledMapIds] = useState<Set<string>>(new Set())
+  const [mapDownloadProgress, setMapDownloadProgress] = useState<{ fileName: string; current: number; total: number } | null>(null)
 
   // inline rename draft
   const [nameDraft, setNameDraft] = useState("")
@@ -88,6 +102,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
   const [modalTab, setModalTab] = useState<ModalTab>("description")
   const [loadingModal, setLoadingModal] = useState(false)
   const [displayedModalVersions, setDisplayedModalVersions] = useState<ModVersion[]>([])
+  const { showAlert, alertDialog } = useAlertDialog()
 
   const iconInputRef = useRef<HTMLInputElement>(null)
   const datapackInputRef = useRef<HTMLInputElement>(null)
@@ -112,6 +127,144 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
   useEffect(() => {
     void refreshWorlds()
   }, [refreshWorlds])
+
+  // Подписка на прогресс скачивания карт/датапаков
+  useEffect(() => {
+    const off = window.electronAPI?.onContentDownloadProgress?.((progress) => {
+      setMapDownloadProgress(progress)
+    })
+    return () => off?.()
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    setMapCategoriesLoading(true)
+    window.electronAPI?.modsCurseforgeCategories?.().then((cats) => {
+      if (!active) return
+      const worldCats = ((cats ?? []) as Array<{ name: string; icon: string; header: string; projectType: string; slug?: string; cfCategoryId?: number }>)
+        .filter((c) => c.projectType === "world")
+        .map((c) => ({
+          slug: String(c.slug ?? c.cfCategoryId ?? c.name).toLowerCase(),
+          name: c.name,
+          icon: c.icon ?? "",
+          header: c.header ?? "categories",
+        }))
+      setMapCategories(worldCats)
+    }).catch(() => {}).finally(() => {
+      if (active) setMapCategoriesLoading(false)
+    })
+    return () => { active = false }
+  }, [])
+
+  const loadMaps = useCallback(async (query: string, sort: ModSort, page: number, matchVer: boolean, cats: string[]) => {
+    setMapLoading(true)
+    try {
+      const gv = matchVer ? build.version : undefined
+      const categories = cats.length > 0 ? cats : undefined
+      const resp = await window.electronAPI?.modsCurseforgeSearch(
+        query.trim(),
+        "world" as never,
+        gv,
+        undefined,
+        sort,
+        page - 1,
+        categories,
+      )
+      setMapResults(resp?.results ?? [])
+      setMapTotalHits(resp?.totalCount ?? 0)
+    } catch {
+      setMapResults([])
+      setMapTotalHits(0)
+    } finally {
+      setMapLoading(false)
+    }
+  }, [build.version])
+
+  useEffect(() => {
+    if (viewMode !== "catalog") return
+    const timer = window.setTimeout(() => {
+      void loadMaps(mapSearch, mapSort, mapPage, filterBuildVersion, selectedMapCategories)
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [viewMode, mapSearch, mapSort, mapPage, filterBuildVersion, selectedMapCategories, loadMaps])
+
+  const handleDownloadMap = async (map: ModSearchResult) => {
+    if (!map.modId || installingMapId) return
+    setInstallingMapId(map.id)
+    setMapDownloadProgress(null)
+    try {
+      let downloadUrl = ""
+      if (map.primaryFileId) {
+        downloadUrl = await window.electronAPI?.modsCurseforgeDownloadUrl(map.primaryFileId, map.modId) ?? ""
+      }
+      if (!downloadUrl) {
+        const details = await window.electronAPI?.modsCurseforgeDetails(map.modId)
+        const file = details?.versions?.find(v => v.files?.[0]?.url)?.files?.[0]
+        if (file?.url) {
+          downloadUrl = file.url
+        } else if (details?.versions?.[0]?.id) {
+          downloadUrl = await window.electronAPI?.modsCurseforgeDownloadUrl(Number(details.versions[0].id), map.modId) ?? ""
+        }
+      }
+
+      if (!downloadUrl) {
+        showAlert(t("worlds.errors.getMapDownloadLink"))
+        return
+      }
+
+      const res = await window.electronAPI?.importWorldRemote(build.name, downloadUrl, map.name)
+      if (res?.success) {
+        setInstalledMapIds(prev => new Set(prev).add(map.id))
+        await refreshWorlds()
+        if (res.folder) setSelectedFolder(res.folder)
+      } else {
+        showAlert(res?.error ?? t("worlds.errors.mapInstall"))
+      }
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : t("worlds.errors.mapDownload"))
+    } finally {
+      setInstallingMapId(null)
+      setMapDownloadProgress(null)
+    }
+  }
+
+  const openMapDetails = async (map: ModSearchResult) => {
+    if (!map.modId) return
+    setLoadingModal(true)
+    try {
+      const details = await window.electronAPI?.modsCurseforgeDetails(map.modId)
+      if (details) {
+        setSelectedDetails(details)
+        setDisplayedModalVersions(details.versions ?? [])
+        setModalTab("description")
+      } else {
+        showAlert(t("worlds.errors.mapInfo"))
+      }
+    } catch {
+      showAlert(t("worlds.errors.mapInfo"))
+    } finally {
+      setLoadingModal(false)
+    }
+  }
+
+  const handleInstallMapVersion = async (version: ModVersion) => {
+    if (!selectedDetails) return
+    const url = version.downloadUrl || version.files?.[0]?.url
+      || (selectedDetails.modId ? await window.electronAPI?.modsCurseforgeDownloadUrl(Number(version.id), selectedDetails.modId) : null)
+    if (!url) {
+      showAlert(t("worlds.errors.getMapDownloadLink"))
+      return
+    }
+    const res = await window.electronAPI?.importWorldRemote(build.name, url, selectedDetails.name)
+    if (res?.success) {
+      if (selectedDetails.id) setInstalledMapIds(prev => new Set(prev).add(selectedDetails.id))
+      await refreshWorlds()
+      if (res.folder) setSelectedFolder(res.folder)
+      setSelectedDetails(null)
+    } else {
+      showAlert(res?.error ?? t("worlds.errors.mapInstall"))
+    }
+  }
 
   const refreshDatapacks = useCallback(async (folder: string) => {
     try {
@@ -173,7 +326,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
         setNameDraft(newName)
       } else {
         setNameDraft(selectedWorld.name)
-        alert(result?.error ?? "fetch failed")
+        showAlert(result?.error ?? t("worlds.errors.rename"))
       }
     } finally {
       setRenaming(false)
@@ -193,7 +346,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
           await refreshWorlds()
           if (result.folder) setSelectedFolder(result.folder)
         } else {
-          alert(result?.error ?? "fetch failed")
+          showAlert(result?.error ?? t("worlds.errors.copy"))
         }
       } else {
         const result = await window.electronAPI?.importWorldZip(build.name, namePrompt.pendingFile ?? "", name || undefined)
@@ -202,7 +355,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
           await refreshWorlds()
           if (result.folder) setSelectedFolder(result.folder)
         } else {
-          alert(result?.error ?? "fetch failed")
+          showAlert(result?.error ?? t("worlds.errors.import"))
         }
       }
     } finally {
@@ -214,7 +367,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     if (!selectedWorld) return
     const result = await window.electronAPI?.resetWorldIcon(build.name, selectedWorld.folder)
     if (result?.success) await refreshWorlds()
-    else alert(result?.error ?? "fetch failed")
+    else showAlert(result?.error ?? t("worlds.errors.resetIcon"))
   }
 
   const handleDelete = async () => {
@@ -226,7 +379,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
         setDeleteOpen(false)
         await refreshWorlds()
       } else {
-        alert(result?.error ?? "fetch failed")
+        showAlert(result?.error ?? t("worlds.errors.deleteWorld"))
       }
     } finally {
       setDeleting(false)
@@ -238,13 +391,13 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     const dataUrl = await readFileAsDataUrl(file)
     const result = await window.electronAPI?.setWorldIcon(build.name, selectedWorld.folder, dataUrl)
     if (result?.success) await refreshWorlds()
-    else alert(result?.error ?? "fetch failed")
+    else showAlert(result?.error ?? t("worlds.errors.changeIcon"))
   }
 
   const handleImportFile = (file: File) => {
     const localPath = window.electronAPI?.getFilePath(file)
     if (!localPath) {
-      alert("fetch failed")
+      showAlert(t("worlds.errors.getFilePath"))
       return
     }
     const initial = file.name.replace(/\.zip$/i, "")
@@ -256,12 +409,12 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     if (!selectedWorld) return
     const localPath = window.electronAPI?.getFilePath(file)
     if (!localPath) {
-      alert("fetch failed")
+      showAlert(t("worlds.errors.getFilePath"))
       return
     }
     const result = await window.electronAPI?.installDatapackLocal(build.name, selectedWorld.folder, localPath)
     if (!result?.success) {
-      alert(result?.error ?? "fetch failed")
+      showAlert(result?.error ?? t("worlds.errors.datapackInstall"))
       return
     }
     await refreshDatapacks(selectedWorld.folder)
@@ -275,27 +428,27 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
         const versions = await window.electronAPI?.modsModrinthVersions(mod.slug)
         const version = versions?.find(v => v.files?.[0]?.url)
         if (!version?.files?.[0]) {
-          alert("fetch failed")
+          showAlert(t("worlds.errors.datapackNoVersion"))
           return
         }
         const file = version.files[0]
         const result = await window.electronAPI?.installDatapackRemote(build.name, selectedWorld.folder, file.url, file.filename || `${mod.slug}.zip`)
-        if (!result?.success) alert(result?.error ?? "fetch failed")
+        if (!result?.success) showAlert(result?.error ?? t("worlds.errors.datapackDownload"))
       } else if (mod.modId) {
         const details = await window.electronAPI?.modsCurseforgeDetails(mod.modId)
         const version = details?.versions?.find(v => Number(v.id) === mod.primaryFileId) ?? details?.versions?.[0]
         if (!version) {
-          alert("fetch failed")
+          showAlert(t("worlds.errors.datapackNoVersion"))
           return
         }
         const url = await window.electronAPI?.modsCurseforgeDownloadUrl(Number(version.id), mod.modId)
         if (!url) {
-          alert("fetch failed")
+          showAlert(t("worlds.errors.downloadLink"))
           return
         }
         const fileName = version.fileName || url.split("/").pop()?.split("?")[0] || `${mod.slug}.zip`
         const result = await window.electronAPI?.installDatapackRemote(build.name, selectedWorld.folder, url, fileName)
-        if (!result?.success) alert(result?.error ?? "fetch failed")
+        if (!result?.success) showAlert(result?.error ?? t("worlds.errors.datapackDownload"))
       }
       await refreshDatapacks(selectedWorld.folder)
     } finally {
@@ -307,7 +460,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     if (!selectedWorld) return
     const result = await window.electronAPI?.deleteWorldDatapack(build.name, selectedWorld.folder, name)
     if (!result?.success) {
-      alert(result?.error ?? "fetch failed")
+      showAlert(result?.error ?? t("worlds.errors.datapackDelete"))
       return
     }
     await refreshDatapacks(selectedWorld.folder)
@@ -326,10 +479,10 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
         setDisplayedModalVersions(details.versions ?? [])
         setModalTab("description")
       } else {
-        alert("fetch failed")
+        showAlert(t("worlds.errors.datapackInfo"))
       }
     } catch {
-      alert("fetch failed")
+      showAlert(t("worlds.errors.datapackInfo"))
     } finally {
       setLoadingModal(false)
     }
@@ -339,40 +492,418 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     if (!selectedWorld) return
     const url = version.downloadUrl || version.files?.[0]?.url
     if (!url) {
-      alert("fetch failed")
+      showAlert(t("worlds.errors.noDownloadLink"))
       return
     }
     const fileName = version.fileName || url.split("/").pop()?.split("?")[0] || "datapack.zip"
     const result = await window.electronAPI?.installDatapackRemote(build.name, selectedWorld.folder, url, fileName)
     if (!result?.success) {
-      alert(result?.error ?? "fetch failed")
+      showAlert(result?.error ?? t("worlds.errors.datapackDownload"))
       return
     }
     await refreshDatapacks(selectedWorld.folder)
   }
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      {worlds === null ? (
-        <div className="flex h-full items-center justify-center text-muted-foreground">
-          <IconLoader2 className="h-6 w-6 animate-spin" />
+    <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
+      {/* Переключатель режимов */}
+      <div className="flex items-center justify-between border-b border-border pb-2.5 shrink-0 pr-1">
+        <div className="flex items-center gap-1.5 bg-muted/50 p-1 rounded-xl border border-border">
+          <button
+            type="button"
+            onClick={() => setViewMode("installed")}
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+              viewMode === "installed"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <IconMap className="h-3.5 w-3.5" />
+            <span>{t("worlds.tabs.installed")}</span>
+            {worlds && (
+              <span className="rounded-full bg-muted px-1.5 py-0.2 text-[10px] text-muted-foreground">
+                {worlds.length}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("catalog")}
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+              viewMode === "catalog"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <IconMap className="h-3.5 w-3.5 text-primary" />
+            <span>{t("worlds.tabs.catalog")}</span>
+          </button>
+        </div>
+
+        {viewMode === "installed" && worlds && worlds.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => worldZipInputRef.current?.click()}
+              className="flex items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <IconUpload className="h-3.5 w-3.5" strokeWidth={1.75} />
+              {t("worlds.import_zip")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void refreshWorlds()}
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <IconRefresh className={cn("h-3.5 w-3.5", loading && "animate-spin")} strokeWidth={1.75} />
+              {t("worlds.refresh")}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {viewMode === "catalog" ? (
+        <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
+          {/* Тулбар поиска и фильтров */}
+          <div className="shrink-0 flex flex-wrap items-center justify-between gap-2.5 pr-2">
+            <div className="relative flex-1 min-w-[240px]">
+              <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                type="text"
+                value={mapSearch}
+                onChange={e => { setMapSearch(e.target.value); setMapPage(1) }}
+                placeholder={t("worlds.search_placeholder")}
+                className="w-full pl-9 pr-4 py-2 rounded-xl bg-muted/50 border border-border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none bg-muted/40 hover:bg-muted/70 px-3 py-2 rounded-xl border border-border transition-colors h-9">
+                <Checkbox
+                  checked={filterBuildVersion}
+                  onCheckedChange={(checked) => { setFilterBuildVersion(!!checked); setMapPage(1) }}
+                />
+                <span>{t("worlds.only_current_version", { version: build.version })}</span>
+              </label>
+
+              {/* Категории карт через модальное окно с чекбоксами */}
+              <Dialog open={mapCatDialogOpen} onOpenChange={(open) => {
+                if (open) setDraftMapCategories(selectedMapCategories)
+                setMapCatDialogOpen(open)
+              }}>
+                <DialogTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-colors h-9",
+                      selectedMapCategories.length > 0
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "bg-muted/50 border border-border text-foreground hover:bg-muted"
+                    )}
+                  >
+                    <IconList className="w-4 h-4" strokeWidth={1.75} />
+                    <span>{selectedMapCategories.length > 0 ? t("servers.addons.categoriesCount", { count: selectedMapCategories.length }) : t("servers.addons.categories")}</span>
+                  </button>
+                </DialogTrigger>
+                <DialogContent className="max-w-sm p-6 bg-card border border-border shadow-2xl rounded-3xl flex flex-col max-h-[75vh]">
+                  <DialogHeader className="text-left">
+                    <DialogTitle className="text-lg font-bold text-foreground">
+                      {t("worlds.ui.categoriesTitle")}
+                    </DialogTitle>
+                    <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+                      {t("worlds.ui.categoriesDesc")}
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <div className="flex flex-col gap-1 overflow-y-auto flex-1 my-3 pr-1">
+                    {mapCategoriesLoading && mapCategories.length === 0 && (
+                      <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
+                        <IconLoader2 className="w-4 h-4 animate-spin" />
+                        <span>{t("worlds.ui.categoriesLoading")}</span>
+                      </div>
+                    )}
+                    {!mapCategoriesLoading && mapCategories.length === 0 && (
+                      <div className="px-3 py-4 text-xs text-muted-foreground">
+                        {t("worlds.ui.categoriesError")}
+                      </div>
+                    )}
+                    {mapCategories.map((cat) => {
+                      const isChecked = draftMapCategories.includes(cat.slug)
+                      const hasSvg = !!cat.icon && cat.icon.trimStart().startsWith("<svg")
+                      const hasImg = !!cat.icon && !hasSvg && cat.icon.startsWith("http")
+
+                      return (
+                        <label
+                          key={cat.slug}
+                          className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-muted/50 cursor-pointer text-sm text-foreground transition-colors"
+                        >
+                          <Checkbox
+                            checked={isChecked}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setDraftMapCategories((prev) => [...prev, cat.slug])
+                              } else {
+                                setDraftMapCategories((prev) => prev.filter((id) => id !== cat.slug))
+                              }
+                            }}
+                          />
+                          {hasSvg && (
+                            <span
+                              className="w-4 h-4 shrink-0 text-muted-foreground [&_svg]:w-full [&_svg]:h-full"
+                              dangerouslySetInnerHTML={{ __html: cat.icon }}
+                            />
+                          )}
+                          {hasImg && (
+                            <img src={cat.icon} alt="" className="w-4 h-4 shrink-0 rounded-sm object-contain" />
+                          )}
+                          {!hasSvg && !hasImg && <IconMap className="w-4 h-4 shrink-0 text-muted-foreground" />}
+                          <span className="flex-1 font-medium text-xs">{cat.name}</span>
+                          {cat.header !== "categories" && (
+                            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{cat.header}</span>
+                          )}
+                        </label>
+                      )
+                    })}
+                  </div>
+
+                  {draftMapCategories.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setDraftMapCategories([])}
+                      className="text-xs text-muted-foreground hover:text-foreground transition-colors mb-2 text-left"
+                    >
+                      {t("worlds.ui.resetSelected")}
+                    </button>
+                  )}
+
+                  <div className="flex gap-2 pt-2 border-t border-border/50">
+                    <button
+                      type="button"
+                      onClick={() => setMapCatDialogOpen(false)}
+                      className="flex-1 px-4 py-2 rounded-xl text-xs font-medium bg-muted hover:bg-muted/80 text-muted-foreground transition-colors"
+                    >
+                      {t("common.cancel")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMapCategories(draftMapCategories)
+                        setMapPage(1)
+                        setMapCatDialogOpen(false)
+                      }}
+                      className="flex-1 px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground transition-all shadow-sm"
+                    >
+                      {t("common.apply")}
+                    </button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+
+              {/* Сортировка */}
+              <Select value={mapSort} onValueChange={(val) => { setMapSort(val as ModSort); setMapPage(1) }}>
+                <SelectTrigger className="w-[165px] h-9 text-xs rounded-xl bg-muted/50 border-border text-foreground">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="downloads" className="text-xs">{t("mods.sort.downloads")}</SelectItem>
+                  <SelectItem value="featured" className="text-xs">{t("mods.sort.featured")}</SelectItem>
+                  <SelectItem value="newest" className="text-xs">{t("mods.sort.newest")}</SelectItem>
+                  <SelectItem value="updated" className="text-xs">{t("mods.sort.updated")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Область списка карт со своим скроллом */}
+          <div className="flex-1 min-h-0 overflow-y-auto pr-2 pb-3">
+            {mapLoading ? (
+              <div className="flex h-64 items-center justify-center text-muted-foreground">
+                <IconLoader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : mapResults.length === 0 ? (
+              <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
+                <IconMap className="h-8 w-8 text-muted-foreground/40" />
+                <p className="text-sm text-muted-foreground">{t("worlds.no_maps_found")}</p>
+                {filterBuildVersion && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterBuildVersion(false)}
+                    className="mt-1 text-xs text-primary hover:underline"
+                  >
+                    {t("worlds.show_all_versions")}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {mapResults.map(map => {
+                  const isInstalling = installingMapId === map.id
+                  const isInstalled = installedMapIds.has(map.id) || (worlds?.some(w => w.name.toLowerCase() === map.name.toLowerCase()) ?? false)
+                  const progress = isInstalling ? mapDownloadProgress : null
+                  const percent = progress && progress.total > 0
+                    ? Math.min(100, Math.round((progress.current / progress.total) * 100))
+                    : null
+
+                  return (
+                    <div
+                      key={map.id}
+                      className={cn(
+                        "group flex flex-col justify-between rounded-2xl border border-border bg-card p-3.5 transition-colors hover:border-primary/50",
+                        isInstalling && "border-primary/50 bg-primary/5",
+                      )}
+                    >
+                      <div>
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted border border-border">
+                            {map.iconUrl ? (
+                              <img src={map.iconUrl} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <IconMap className="h-6 w-6 text-muted-foreground/50" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="font-semibold text-foreground text-sm truncate group-hover:text-primary transition-colors">
+                              {map.name}
+                            </h4>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                              <span>{t("worlds.download_count", { count: formatDownloads(map.downloadCount) })}</span>
+                              {map.author && <span>· {map.author}</span>}
+                            </div>
+                            {map.categories && map.categories.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                {map.categories.slice(0, 3).map(cat => (
+                                  <CategoryBadge key={cat} name={cat} source="curseforge" className="px-1.5 py-0 text-[10px]" />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {map.summary && (
+                          <p className="text-xs text-muted-foreground line-clamp-2 mt-2 leading-relaxed">
+                            {map.summary}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="mt-3 pt-3 border-t border-border/60">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void openMapDetails(map)}
+                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-muted"
+                          >
+                            <IconInfoCircle className="h-3.5 w-3.5" />
+                            {t("worlds.details")}
+                          </button>
+
+                          {isInstalled && !isInstalling ? (
+                            <span className="flex items-center gap-1 text-xs font-medium text-primary px-3 py-1.5 rounded-lg bg-primary/10">
+                              <IconCheck className="h-3.5 w-3.5" />
+                              {t("worlds.installed")}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isInstalling || installingMapId !== null}
+                              onClick={() => void handleDownloadMap(map)}
+                              className="flex items-center justify-center gap-1.5 min-w-[95px] rounded-lg bg-primary px-3.5 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+                            >
+                              {isInstalling ? (
+                                <>
+                                  <IconLoader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                                  <span>{percent !== null ? `${percent}%` : t("worlds.downloading")}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <IconDownload className="h-3.5 w-3.5" strokeWidth={1.75} />
+                                  <span>{t("worlds.download")}</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
+
+                        {isInstalling && (
+                          <div className="mt-2.5">
+                            <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                              <span className="truncate">
+                                {progress?.fileName ? t("worlds.downloading") : t("worlds.extracting")}
+                              </span>
+                              <span className="shrink-0 font-mono tabular-nums">
+                                {percent !== null ? `${percent}%` : ""}
+                              </span>
+                            </div>
+                            <div className={cn("h-1.5 w-full rounded-full bg-muted", percent === null && "progress-indeterminate")}>
+                              {/* Размер архива ещё неизвестен — полоса бежит; с байтами заполняется. */}
+                              {percent !== null && (
+                                <div
+                                  className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+                                  style={{ width: `${Math.max(2, percent)}%` }}
+                                />
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {mapTotalHits > 20 && (
+              <Pagination
+                currentPage={mapPage - 1}
+                totalPages={Math.ceil(mapTotalHits / 20)}
+                onPageChange={(p) => setMapPage(p + 1)}
+                className="mt-4"
+              />
+            )}
+          </div>
+        </div>
+      ) : worlds === null ? (
+        <div className="flex h-full items-center justify-center text-muted-foreground py-20">
+          <IconLoader2 className="h-6 w-6 animate-spin text-primary" />
         </div>
       ) : worlds.length === 0 ? (
-        <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-muted/50">
-            <IconMap className="h-9 w-9 text-muted-foreground/50" strokeWidth={1.5} />
+        <div className="flex h-full flex-col items-center justify-center gap-4 text-center max-w-md mx-auto py-12">
+          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10 text-primary border border-primary/20">
+            <IconMap className="h-10 w-10" strokeWidth={1.75} />
           </div>
-          <div className="text-lg font-semibold text-foreground">fetch failed</div>
-          <p className="max-w-sm text-sm text-muted-foreground">
-fetch failed
-          </p>
+          <div>
+            <div className="text-xl font-bold text-foreground">{t("worlds.empty_title")}</div>
+            <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
+              {t("worlds.empty_description")}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2.5 mt-2">
+            <button
+              type="button"
+              onClick={() => setViewMode("catalog")}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm"
+            >
+              <IconMap className="h-4 w-4" strokeWidth={2} />
+              {t("worlds.open_catalog")}
+            </button>
+            <button
+              type="button"
+              onClick={() => worldZipInputRef.current?.click()}
+              className="flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <IconUpload className="h-4 w-4" strokeWidth={1.75} />
+              {t("worlds.import_zip")}
+            </button>
+          </div>
         </div>
       ) : (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        <div className="flex-1 min-h-0 overflow-y-auto pr-2 pb-3">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           {/* World list */}
           <div>
             <div className="mb-3 flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold text-foreground">fetch failed{worlds.length}</div>
+              <div className="text-sm font-semibold text-foreground">{t("worlds.ui.title", { count: worlds.length })}</div>
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
@@ -380,7 +911,7 @@ fetch failed
                   className="flex items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
                   <IconUpload className="h-3.5 w-3.5" strokeWidth={1.75} />
-fetch failed
+                  {t("worlds.import_zip")}
                 </button>
                 <button
                   type="button"
@@ -388,7 +919,7 @@ fetch failed
                   className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
                   <IconRefresh className={cn("h-3.5 w-3.5", loading && "animate-spin")} strokeWidth={1.75} />
-fetch failed
+                  {t("common.refresh")}
                 </button>
               </div>
               <input
@@ -429,11 +960,11 @@ fetch failed
                     <div className="truncate text-sm font-semibold text-foreground">{world.name}</div>
                     <div className="mt-0.5 truncate text-xs text-muted-foreground">
                       {world.gameMode}
-                      {world.hardcore ? "fetch failed" : ""}
+                      {world.hardcore ? t("worlds.ui.hardcore") : ""}
                       {world.mcVersion ? ` · ${world.mcVersion}` : ""}
                     </div>
                     <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground/70">
-                      <span>fetch failed{formatDate(world.lastPlayed)}</span>
+                      <span>{t("worlds.ui.playedOn", { date: formatDateTime(world.lastPlayed) })}</span>
                     </div>
                   </div>
                 </button>
@@ -456,7 +987,7 @@ fetch failed
                   <button
                     type="button"
                     onClick={() => void handleResetIcon()}
-                    title="fetch failed"
+                    title={t("worlds.ui.resetIcon")}
                     className="absolute bottom-1 right-9 flex h-7 w-7 items-center justify-center rounded-lg bg-background/85 text-muted-foreground shadow-sm transition-colors hover:text-destructive"
                   >
                     <IconX className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -464,7 +995,7 @@ fetch failed
                   <button
                     type="button"
                     onClick={() => iconInputRef.current?.click()}
-                    title="fetch failed"
+                    title={t("worlds.ui.changeIcon")}
                     className="absolute bottom-1 right-1 flex h-7 w-7 items-center justify-center rounded-lg bg-background/85 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
                   >
                     <IconPhoto className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -495,8 +1026,8 @@ fetch failed
                     }}
                     disabled={renaming}
                     maxLength={64}
-                    placeholder="fetch failed"
-                    title="fetch failed"
+                    placeholder={t("worlds.ui.namePlaceholder")}
+                    title={t("worlds.ui.nameTitle")}
                     className={cn(
                       "h-10 w-full rounded-xl border border-border bg-muted/40 px-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary",
                       renaming && "opacity-60"
@@ -504,8 +1035,8 @@ fetch failed
                   />
                   <div className="mt-0.5 text-sm text-muted-foreground">
                     {selectedWorld.gameMode}
-                    {selectedWorld.hardcore ? "fetch failed" : ""}
-                    {selectedWorld.mcVersion ? ` · MC ${selectedWorld.mcVersion}` : ""}
+                    {selectedWorld.hardcore ? t("worlds.ui.hardcore") : ""}
+                    {selectedWorld.mcVersion ? ` · ${selectedWorld.mcVersion}` : ""}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
@@ -514,15 +1045,15 @@ fetch failed
                       className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
                     >
                       <IconFolderOpen className="h-3.5 w-3.5" strokeWidth={1.75} />
-fetch failed
+                      {t("worlds.ui.folder")}
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setPromptValue(`fetch failed`); setNamePrompt({ mode: "copy", initial: `fetch failed` }) }}
+                      onClick={() => { const n = `${selectedWorld.name} ${t("worlds.ui.copySuffix")}`; setPromptValue(n); setNamePrompt({ mode: "copy", initial: n }) }}
                       className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
                     >
                       <IconCopy className="h-3.5 w-3.5" strokeWidth={1.75} />
-fetch failed
+                      {t("worlds.ui.copy")}
                     </button>
                     <button
                       type="button"
@@ -530,7 +1061,7 @@ fetch failed
                       className="flex items-center gap-1.5 rounded-xl bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
                     >
                       <IconTrash className="h-3.5 w-3.5" strokeWidth={1.75} />
-fetch failed
+                      {t("common.delete")}
                     </button>
                   </div>
                 </div>
@@ -538,16 +1069,16 @@ fetch failed
 
               <div className="mt-4 grid grid-cols-2 gap-3 rounded-2xl border border-border/70 bg-muted/20 p-4 sm:grid-cols-3">
                 <div>
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">fetch failed</div>
+                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("worlds.ui.seed")}</div>
                   <div className="mt-1 flex items-center gap-1.5">
-                    <span className="max-w-[120px] truncate text-sm font-medium text-foreground" title={selectedWorld.seed || "fetch failed"}>
+                    <span className="max-w-[120px] truncate text-sm font-medium text-foreground" title={selectedWorld.seed || t("worlds.ui.seedUnknown")}>
                       {selectedWorld.seed || "—"}
                     </span>
                     {selectedWorld.seed && (
                       <button
                         type="button"
                         onClick={() => copyToClipboard(selectedWorld.seed)}
-                        title="fetch failed"
+                        title={t("worlds.ui.copySeed")}
                         className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                       >
                         <IconCopy className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -556,16 +1087,16 @@ fetch failed
                   </div>
                 </div>
                 <div>
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">fetch failed</div>
+                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("buildDetail.played")}</div>
                   <div className="mt-1 text-sm font-medium text-foreground">{formatPlaytime(selectedWorld.playedTime)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">fetch failed</div>
+                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("worlds.ui.size")}</div>
                   <div className="mt-1 text-sm font-medium text-foreground">{formatBytes(selectedWorld.sizeBytes)}</div>
                 </div>
                 <div className="col-span-2 sm:col-span-3">
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">fetch failed</div>
-                  <div className="mt-1 text-sm font-medium text-foreground">{formatDate(selectedWorld.lastPlayed)}</div>
+                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("worlds.ui.lastPlayed")}</div>
+                  <div className="mt-1 text-sm font-medium text-foreground">{formatDateTime(selectedWorld.lastPlayed)}</div>
                 </div>
               </div>
 
@@ -574,7 +1105,7 @@ fetch failed
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                     <IconArchive className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
-fetch failed{datapacks.length}
+                    {t("worlds.ui.datapacks", { count: datapacks.length })}
                   </div>
                   <button
                     type="button"
@@ -582,7 +1113,7 @@ fetch failed{datapacks.length}
                     className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
                   >
                     <IconUpload className="h-3.5 w-3.5" strokeWidth={1.75} />
-fetch failed
+                    {t("worlds.ui.uploadFile")}
                   </button>
                   <input
                     ref={datapackInputRef}
@@ -610,7 +1141,7 @@ fetch failed
                           type="button"
                           onClick={() => void handleDeleteDatapack(dp.name)}
                           className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                          title="fetch failed"
+                          title={t("worlds.ui.deleteDatapack")}
                         >
                           <IconTrash className="h-4 w-4" strokeWidth={1.75} />
                         </button>
@@ -628,7 +1159,7 @@ fetch failed
                         type="text"
                         value={search}
                         onChange={e => setSearch(e.target.value)}
-                        placeholder="fetch failed"
+                        placeholder={t("worlds.ui.searchDatapack")}
                         className="h-10 w-full rounded-xl border border-border bg-muted/40 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary"
                       />
                     </div>
@@ -667,12 +1198,12 @@ fetch failed
 
                   {searching && (
                     <div className="mt-3 flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-                      <IconLoader2 className="h-4 w-4 animate-spin" />fetch failed
+                      <IconLoader2 className="h-4 w-4 animate-spin" /> {t("worlds.ui.searching")}
                     </div>
                   )}
 
                   {!searching && results && results.length === 0 && (
-                    <div className="mt-3 py-4 text-center text-sm text-muted-foreground">fetch failed</div>
+                    <EmptyState compact title={t("worlds.ui.nothingFound")} className="mt-3 py-4" />
                   )}
 
                   {!searching && results && results.length > 0 && (
@@ -689,7 +1220,7 @@ fetch failed
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-sm font-medium text-foreground">{mod.name}</div>
                             <div className="truncate text-xs text-muted-foreground">
-                              {mod.downloadCount.toLocaleString("ru-RU")}fetch failed
+                              {t("worlds.download_count", { count: mod.downloadCount.toLocaleString() })}
                             </div>
                           </div>
                           <button
@@ -698,7 +1229,7 @@ fetch failed
                             className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                           >
                             <IconInfoCircle className="h-3.5 w-3.5" strokeWidth={1.75} />
-fetch failed
+                            {t("worlds.details")}
                           </button>
                           <button
                             type="button"
@@ -711,7 +1242,7 @@ fetch failed
                             ) : (
                               <IconDownload className="h-3.5 w-3.5" strokeWidth={2} />
                             )}
-fetch failed
+                            {t("worlds.ui.install")}
                           </button>
                         </div>
                       ))}
@@ -722,15 +1253,19 @@ fetch failed
             </div>
           )}
         </div>
+        </div>
       )}
 
       {/* Copy / import name prompt modal */}
       {namePrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in-0">
+        <ModalLayer
+          onClose={() => { if (!promptBusy) setNamePrompt(null) }}
+          className="bg-background/80 backdrop-blur-sm animate-in fade-in-0"
+        >
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-2xl border border-border animate-in zoom-in-95">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-foreground">
-                {namePrompt.mode === "copy" ? "fetch failed" : "fetch failed"}
+                {namePrompt.mode === "copy" ? t("worlds.ui.copyWorld") : t("worlds.ui.importWorldZip")}
               </h3>
               <button
                 type="button"
@@ -742,8 +1277,8 @@ fetch failed
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               {namePrompt.mode === "copy"
-                ? `fetch failed`
-                : "fetch failed"}
+                ? t("worlds.ui.copyHint", { name: selectedWorld?.name ?? "" })
+                : t("worlds.ui.importHint")}
             </p>
             <input
               type="text"
@@ -752,7 +1287,7 @@ fetch failed
               onKeyDown={e => { if (e.key === "Enter") void submitNamePrompt() }}
               autoFocus
               maxLength={64}
-              placeholder="fetch failed"
+              placeholder={t("worlds.ui.namePlaceholder")}
               className="mt-4 h-12 w-full rounded-2xl border border-border bg-muted/40 px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary"
             />
             <div className="mt-5 flex gap-3">
@@ -761,7 +1296,7 @@ fetch failed
                 onClick={() => setNamePrompt(null)}
                 className="flex-1 rounded-2xl border border-border bg-muted/30 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
               >
-fetch failed
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -770,19 +1305,22 @@ fetch failed
                 className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 {promptBusy && <IconLoader2 className="h-4 w-4 animate-spin" />}
-                {namePrompt.mode === "copy" ? "fetch failed" : "fetch failed"}
+                {namePrompt.mode === "copy" ? t("worlds.ui.copy") : t("worlds.ui.import")}
               </button>
             </div>
           </div>
-        </div>
+        </ModalLayer>
       )}
 
       {/* Delete confirm modal */}
       {deleteOpen && selectedWorld && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in-0">
+        <ModalLayer
+          onClose={() => { if (!deleting) setDeleteOpen(false) }}
+          className="bg-background/80 backdrop-blur-sm animate-in fade-in-0"
+        >
           <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-2xl border border-border animate-in zoom-in-95">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-foreground">fetch failed</h3>
+              <h3 className="text-lg font-semibold text-foreground">{t("worlds.ui.deleteTitle")}</h3>
               <button
                 type="button"
                 onClick={() => setDeleteOpen(false)}
@@ -792,7 +1330,7 @@ fetch failed
               </button>
             </div>
             <p className="mt-2 text-sm text-muted-foreground">
-fetch failed«{selectedWorld.name}»fetch failed
+              {t("worlds.ui.deleteDescription", { name: selectedWorld.name })}
             </p>
             <div className="mt-5 flex gap-3">
               <button
@@ -800,7 +1338,7 @@ fetch failed«{selectedWorld.name}»fetch failed
                 onClick={() => setDeleteOpen(false)}
                 className="flex-1 rounded-2xl border border-border bg-muted/30 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
               >
-fetch failed
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -809,23 +1347,31 @@ fetch failed
                 className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-destructive py-2.5 text-sm font-semibold text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 {deleting && <IconLoader2 className="h-4 w-4 animate-spin" />}
-fetch failed
+                {t("common.delete")}
               </button>
             </div>
           </div>
-        </div>
+        </ModalLayer>
       )}
 
-      {/* Datapack details modal */}
+      {/* Datapack or Map details modal */}
       <InstanceModal
         selectedDetails={selectedDetails}
         modalTab={modalTab}
         setModalTab={setModalTab}
         loadingModal={loadingModal}
         displayedModalVersions={displayedModalVersions}
-        onInstallVersion={(version) => void handleInstallDatapackVersion(version)}
+        onInstallVersion={(version) => {
+          if (viewMode === "catalog") {
+            void handleInstallMapVersion(version)
+          } else {
+            void handleInstallDatapackVersion(version)
+          }
+        }}
         onClose={() => setSelectedDetails(null)}
       />
+
+      {alertDialog}
     </div>
   )
 }

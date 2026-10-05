@@ -172,7 +172,7 @@ export function registerQuickPlayHandlers(): void {
       const [buildName, gameDir] = args as [string?, string?]
       const resolved = resolveGameDir(buildName, gameDir)
       if (!resolved) return []
-      logRuntimeDebug(`[QuickPlay] Listing entries for gameDir=${resolved}`)
+      logRuntimeDebug(`fetch failed${resolved}`)
       return readQuickPlayLog(resolved)
     }),
 
@@ -180,7 +180,7 @@ export function registerQuickPlayHandlers(): void {
       const [buildName, gameDir] = args as [string?, string?]
       const resolved = resolveGameDir(buildName, gameDir)
       if (!resolved) return
-      logRuntimeDebug(`[QuickPlay] Clearing log for gameDir=${resolved}`)
+      logRuntimeDebug(`fetch failed${resolved}`)
       await clearQuickPlayLog(resolved)
     }),
 
@@ -189,10 +189,10 @@ export function registerQuickPlayHandlers(): void {
       if (!entry) return
       const resolved = resolveGameDir(buildName, gameDir)
       if (!resolved) return
-      logRuntimeDebug(`[QuickPlay] Removing entry type=${entry.type} address=${entry.address}`)
+      logRuntimeDebug(`fetch failed${entry.type} address=${entry.address}`)
       await removeQuickPlayEntry(resolved, entry)
     }),
   ])
 
-  logRuntimeDebug("[QuickPlay] Handlers registered")
+  logRuntimeDebug("fetch failed")
 }

@@ -33,6 +33,7 @@ electron/main/cloud/credentials.generated.ts
 # Cache
 .codex/
 .xneonlauncher/
+.pnpm-store/
 *.tsbuildinfo
 tsconfig.tsbuildinfo
 
@@ -69,7 +70,16 @@ cloud-server/
 .playwright-mcp/
 .codex/
 .roo/
+.dsh-vision-router/
 plans/
+
+# Electron Debug MCP (CDP-отладка лаунчера из DSH/Cursor):
+# сторонний сервер github.com/amafjarkasi/electron-mcp-server, ставится локально
+.electron-mcp/
+
+# Локальные артефакты проверок: скриншоты и временные файлы тестов
+.shots/
+.tmp-*
 
 # Cloud server data
 data/
@@ -93,7 +103,18 @@ restart-*.js
 ssh-check.js
 test-*.js
 test-*.mjs
+# Исключение: это не временный скрипт, а тесты домена скинов (см. `pnpm run test`).
+# Правило `test-*.mjs` выше съедало его, и 67 тестов не попадали в репозиторий.
+!scripts/test-skins.mjs
 update-*.js
 
 # Temp docs
 PRODUCT_SPECIFICATION.md
+CODE_DEDUP_AUDIT.md
+ELECTRON_DEDUP_CHANGES.md
+electron-dedup-audit.md
+
+# Temp workspace scratch dir
+.tmp/
+launcher-screenshot.png
+

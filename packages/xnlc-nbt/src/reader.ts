@@ -24,7 +24,7 @@ export class NBTReader {
 
     const tagType = this.readByte()
     if (tagType !== TagType.TAG_Compound) {
-      throw new Error(`Root tag must be TAG_Compound, got ${tagType}`)
+      throw new Error(`fetch failed${tagType}`)
     }
 
     this.readName()
@@ -174,7 +174,7 @@ export class NBTReader {
       case TagType.TAG_Long_Array:
         return this.readLongArray()
       default:
-        throw new Error(`Unknown tag type: ${type}`)
+        throw new Error(`fetch failed${type}`)
     }
   }
 }

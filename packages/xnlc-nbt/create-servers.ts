@@ -8,7 +8,7 @@ const nbt = {
     type: 10,
     values: [
       {
-        name: "Xneon Server",
+        name: "fetch failed",
         ip: "mc.xneon.org",
         hidden: 0,
       },

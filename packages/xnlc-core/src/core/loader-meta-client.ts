@@ -15,7 +15,7 @@ export class LoaderMetaClient {
   async getIndex(uid: string): Promise<LoaderMetaIndex> {
     return withRetry(async () => {
       const res = await fetch(`${this.baseUrl}/${uid}/index.json`);
-      if (!res.ok) throw new Error(`Failed to fetch component index for ${uid}: ${res.status}`);
+      if (!res.ok) throw new Error(`fetch failed${uid}: ${res.status}`);
       return res.json() as Promise<LoaderMetaIndex>;
     });
   }
@@ -23,7 +23,7 @@ export class LoaderMetaClient {
   async getVersion(uid: string, version: string): Promise<LoaderMetaVersion> {
     return withRetry(async () => {
       const res = await fetch(`${this.baseUrl}/${uid}/${version}.json`);
-      if (!res.ok) throw new Error(`Failed to fetch component version ${uid}:${version}: ${res.status}`);
+      if (!res.ok) throw new Error(`fetch failed${uid}:${version}: ${res.status}`);
       return res.json() as Promise<LoaderMetaVersion>;
     });
   }

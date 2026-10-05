@@ -76,7 +76,7 @@ export class MetaClient {
     try {
       const res = await withRetry(async () => fetch(VERSION_MANIFEST_V2_URL));
       if (!res.ok) {
-        throw new Error(`Failed to fetch version manifest: ${res.status} ${res.statusText}`);
+        throw new Error(`fetch failed${res.status} ${res.statusText}`);
       }
 
       const data = (await res.json()) as MojangVersionManifest;
@@ -113,14 +113,14 @@ export class MetaClient {
 
     const entry = await this.getVersionEntry(versionId);
     if (!entry) {
-      throw new Error(`Version "${versionId}" not found in manifest`);
+      throw new Error(`fetch failed${versionId}fetch failed`);
     }
 
     let data: VersionJson;
     try {
       const res = await withRetry(async () => fetch(entry.url));
       if (!res.ok) {
-        throw new Error(`Failed to fetch version JSON for "${versionId}": ${res.status} ${res.statusText}`);
+        throw new Error(`fetch failed${versionId}": ${res.status} ${res.statusText}`);
       }
       data = (await res.json()) as VersionJson;
     } catch (err) {

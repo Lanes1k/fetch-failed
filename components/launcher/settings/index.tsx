@@ -2,10 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { changeLanguage } from "@/src/i18n"
 import { cn } from "@/lib/utils"
-import { IconCpu, IconDeviceDesktop, IconShield, IconCloud, IconFolder } from "@tabler/icons-react"
-import { MemorySlider } from "@/components/ui/memory-slider"
-import { useMemoryOptions } from "@/src/hooks/use-memory-options"
-import { memoryToMb, mbToMemory } from "@/lib/memory"
+import { IconCpu, IconDeviceDesktop, IconShield, IconCloud, IconFolder, IconPlayerPlay, IconSettings } from "@tabler/icons-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { settingsTabs, presetThemes, applyTheme } from "./data"
 import { SettingsTabs } from "./settings-tabs"
 import { SettingsResolution } from "./settings-resolution"
@@ -17,17 +15,18 @@ import { SettingsLanguage } from "./settings-language-about"
 import { SettingsAbout } from "./settings-language-about"
 import { SettingsUpdate } from "./settings-update"
 import { SettingsAi } from "./settings-ai"
+import { SettingsStorage } from "./settings-storage"
+import { RamAllocation } from "@/components/launcher/ram-allocation"
 import type { SettingsTab, JavaInstallation } from "./types"
 
 export function SettingsPage() {
   const { t } = useTranslation()
-  const { maxMb, snapPoints } = useMemoryOptions()
   const settingsHydratedRef = useRef(false)
-  const pendingSettingsRef = useRef<Record<string, number>>({})
+  const pendingSettingsRef = useRef<Record<string, { timeoutId: number; value: string }>>({})
   const lastPersistedSettingsRef = useRef<Record<string, string>>({})
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>("game")
   const [selectedTheme, setSelectedTheme] = useState<string>("orange")
-  const [selectedResolution, setSelectedResolution] = useState("fetch failed")
+  const [selectedResolution, setSelectedResolution] = useState("1920x1080 (Full HD)")
   const [customWidth, setCustomWidth] = useState("1920")
   const [customHeight, setCustomHeight] = useState("1080")
   const [useCustomResolution, setUseCustomResolution] = useState(false)
@@ -49,6 +48,7 @@ export function SettingsPage() {
   const [autoJoinServer, setAutoJoinServer] = useState(false)
   const [serverAddress, setServerAddress] = useState("")
   const [serverPort, setServerPort] = useState("25565")
+  const [afterLaunch, setAfterLaunch] = useState<"nothing" | "minimize" | "close">("nothing")
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     const stored = typeof window !== "undefined" ? localStorage.getItem("language") : null
     return stored || "ru"
@@ -56,10 +56,14 @@ export function SettingsPage() {
   const [instancesRoot, setInstancesRoot] = useState("")
 
   useEffect(() => {
-    const stored = localStorage.getItem("theme")
-    const id = stored || "orange"
-    const theme = presetThemes.find(t => t.id === id)
-    if (theme) { setSelectedTheme(id); applyTheme(theme) }
+    const loadTheme = async () => {
+      const dbTheme = await window.electronAPI?.getSetting("theme")
+      const stored = dbTheme || localStorage.getItem("theme")
+      const id = stored || "orange"
+      const theme = presetThemes.find(t => t.id === id)
+      if (theme) { setSelectedTheme(id); applyTheme(theme) }
+    }
+    void loadTheme()
   }, [])
 
   useEffect(() => {
@@ -100,6 +104,7 @@ export function SettingsPage() {
         autoJoinServerSetting,
         serverSetting,
         serverPortSetting,
+        afterLaunchSetting,
       ] = await Promise.all([
         api.getSetting("authlibInjectorEnabled"),
         api.getSetting("retroauthInjectorEnabled"),
@@ -118,6 +123,7 @@ export function SettingsPage() {
         api.getSetting("autoJoinServer"),
         api.getSetting("server"),
         api.getSetting("serverPort"),
+        api.getSetting("afterLaunch"),
       ])
 
       if (cancelled) return
@@ -146,6 +152,7 @@ export function SettingsPage() {
       if (serverSetting) setServerAddress(serverSetting)
       if (serverPortSetting) setServerPort(serverPortSetting)
       if (selectedResolutionSetting) setSelectedResolution(selectedResolutionSetting)
+      if (afterLaunchSetting === "minimize" || afterLaunchSetting === "close") setAfterLaunch(afterLaunchSetting)
       if (customWidthSetting) setCustomWidth(customWidthSetting)
       if (customHeightSetting) setCustomHeight(customHeightSetting)
       setUseCustomResolution(useCustomResolutionSetting === "true")
@@ -157,7 +164,7 @@ export function SettingsPage() {
         showBeta: String(showBetaSetting === "true"),
         showSnapshot: String(showSnapshotSetting === "true"),
         useBmclapi: String(useBmclapiSetting === "true"),
-        selectedResolution: selectedResolutionSetting ?? "fetch failed",
+        selectedResolution: selectedResolutionSetting ?? "1920x1080 (Full HD)",
         customWidth: customWidthSetting ?? "1920",
         customHeight: customHeightSetting ?? "1080",
         useCustomResolution: String(useCustomResolutionSetting === "true"),
@@ -173,25 +180,47 @@ export function SettingsPage() {
     return () => { cancelled = true }
   }, [])
 
+  /** Единственная точка фактической записи настройки: обновляет снапшот и шлёт событие. */
+  const flushSetting = useCallback((key: string, value: string) => {
+    if (lastPersistedSettingsRef.current[key] === value) return
+    lastPersistedSettingsRef.current[key] = value
+    void window.electronAPI?.setSetting(key, value)
+    window.dispatchEvent(new CustomEvent("launcher-setting-changed", { detail: { key, value } }))
+  }, [])
+
   const persistSetting = useCallback((key: string, value: string) => {
     if (!settingsHydratedRef.current) return
     if (lastPersistedSettingsRef.current[key] === value) return
-    if (pendingSettingsRef.current[key]) {
-      window.clearTimeout(pendingSettingsRef.current[key])
+    const pending = pendingSettingsRef.current[key]
+    if (pending) {
+      window.clearTimeout(pending.timeoutId)
     }
-    pendingSettingsRef.current[key] = window.setTimeout(() => {
-      delete pendingSettingsRef.current[key]
-      if (lastPersistedSettingsRef.current[key] === value) return
-      lastPersistedSettingsRef.current[key] = value
-      void window.electronAPI?.setSetting(key, value)
-      window.dispatchEvent(new CustomEvent("launcher-setting-changed", { detail: { key, value } }))
-    }, 250)
-  }, [])
+    pendingSettingsRef.current[key] = {
+      value,
+      timeoutId: window.setTimeout(() => {
+        delete pendingSettingsRef.current[key]
+        flushSetting(key, value)
+      }, 250),
+    }
+  }, [flushSetting])
 
-  useEffect(() => () => {
-    Object.values(pendingSettingsRef.current).forEach((timeoutId) => window.clearTimeout(timeoutId))
-    pendingSettingsRef.current = {}
-  }, [])
+  // Уходим с вкладки (или закрываем окно) — дописываем несохранённые настройки.
+  // Раньше таймеры debounce просто очищались: переключатель успевал отработать
+  // в интерфейсе, но в БД не попадал, и настройка откатывалась после перезахода.
+  useEffect(() => {
+    const flushPending = () => {
+      for (const [key, pending] of Object.entries(pendingSettingsRef.current)) {
+        window.clearTimeout(pending.timeoutId)
+        flushSetting(key, pending.value)
+      }
+      pendingSettingsRef.current = {}
+    }
+    window.addEventListener("pagehide", flushPending)
+    return () => {
+      window.removeEventListener("pagehide", flushPending)
+      flushPending()
+    }
+  }, [flushSetting])
 
   useEffect(() => {
     persistSetting("javaArgs", javaArgs)
@@ -210,18 +239,29 @@ export function SettingsPage() {
   useEffect(() => { persistSetting("customWidth", customWidth) }, [customWidth, persistSetting])
   useEffect(() => { persistSetting("customHeight", customHeight) }, [customHeight, persistSetting])
   useEffect(() => { persistSetting("useCustomResolution", String(useCustomResolution)) }, [persistSetting, useCustomResolution])
+  useEffect(() => { persistSetting("afterLaunch", afterLaunch) }, [afterLaunch, persistSetting])
+
+  /**
+   * Список установленных Java кэшируется в main-процессе (скан реестра +
+   * запуск java.exe стоят секунды). force — кнопка «Обновить» в модалке:
+   * пользователь мог поставить новую Java уже после открытия настроек.
+   */
+  const loadJavaInstallations = useCallback(async (force = false) => {
+    setLoadingJavaInstallations(true)
+    try {
+      const installs = await window.electronAPI?.detectJavaInstallations(force)
+      setDetectedJavaInstallations(installs ?? [])
+    } catch {
+      setDetectedJavaInstallations([])
+    } finally {
+      setLoadingJavaInstallations(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (!showJavaModal) return
-    setLoadingJavaInstallations(true)
-    void window.electronAPI?.detectJavaInstallations().then(installs => {
-      setDetectedJavaInstallations(installs ?? [])
-      setLoadingJavaInstallations(false)
-    }).catch(() => {
-      setDetectedJavaInstallations([])
-      setLoadingJavaInstallations(false)
-    })
-  }, [showJavaModal])
+    void loadJavaInstallations()
+  }, [showJavaModal, loadJavaInstallations])
 
   const handlePickJavaFile = async () => {
     const picked = await window.electronAPI?.pickJavaFile()
@@ -234,23 +274,29 @@ export function SettingsPage() {
 
   const handleChangeInstancesDir = async () => {
     if (!window.electronAPI) return
-    const picked = await window.electronAPI.pickFolder("fetch failed")
+    const picked = await window.electronAPI.pickFolder(t("settings.buildsFolder.pickTitle"))
     if (!picked) return
     const result = await window.electronAPI.setInstancesRoot(picked)
     if (result.success && result.root) {
       setInstancesRoot(result.root)
     } else if (result.error) {
-      console.warn("fetch failed", result.error)
+      console.warn("[Settings] Failed to change builds folder:", result.error)
     }
   }
 
   return (
-    <div className="relative h-[calc(100vh-5rem)] overflow-hidden rounded-2xl bg-card border border-border transition-all duration-300 animate-in fade-in-0 slide-in-from-bottom-4">
-      <div className="absolute -top-32 -right-32 w-64 h-64 bg-accent/5 rounded-full blur-3xl" />
-      <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-primary/5 rounded-full blur-3xl" />
-
-      <div className="relative z-10 p-6 h-full flex flex-col">
-        <h2 className="text-xl font-semibold text-foreground mb-4">{t("settings.title")}</h2>
+    <div className="flex h-full min-h-0 flex-col animate-in fade-in-0 duration-300">
+      <div className="flex h-full min-h-0 flex-col">
+        {/* Значок у заголовка — как у остальных разделов лаунчера */}
+        <div className="mb-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
+            <IconSettings className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-foreground">{t("settings.title")}</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">{t("settings.subtitle")}</p>
+          </div>
+        </div>
 
         <SettingsTabs tabs={settingsTabs} activeTab={activeSettingsTab} setActiveTab={setActiveSettingsTab} t={t} />
 
@@ -258,7 +304,7 @@ export function SettingsPage() {
           <div className="min-h-0 flex-1 space-y-8 overflow-y-auto pr-6 animate-in fade-in-0 slide-in-from-left-4 duration-300">
             <section className="space-y-4">
               <h3 className="text-lg font-medium text-foreground flex items-center gap-2">
-                <IconDeviceDesktop className="w-5 h-5 text-primary" strokeWidth={1.5} />
+                <IconDeviceDesktop className="w-5 h-5 text-primary" strokeWidth={1.75} />
                 {t("settings.resolution")}
               </h3>
               <SettingsResolution
@@ -273,37 +319,19 @@ export function SettingsPage() {
               />
             </section>
 
-            <section className="space-y-4">
-              <h3 className="text-lg font-medium text-foreground flex items-center gap-2">
-                <IconCpu className="w-5 h-5 text-primary" strokeWidth={1.5} />
-                {t("settings.ram")}
-              </h3>
-              <div className="rounded-xl border border-border bg-muted/30 p-5 space-y-2.5">
-                <label className="block text-sm font-medium text-foreground">{t("settings.ram.allocated")}</label>
-                <MemorySlider
-                  value={memoryToMb(memoryMax)}
-                  min={512}
-                  max={maxMb}
-                  step={64}
-                  snapPoints={snapPoints}
-                  snapRange={512}
-                  unit="MB"
-                  onChange={(v) => setMemoryMax(mbToMemory(v))}
-                />
-                <p className="text-xs text-muted-foreground">{t("settings.ram.desc")}</p>
-              </div>
-            </section>
+            {/* Общий блок с первоначальной настройкой: RamAllocation */}
+            <RamAllocation memoryMax={memoryMax} onChange={setMemoryMax} />
 
             <section className="space-y-4">
               <h3 className="text-lg font-medium text-foreground flex items-center gap-2">
                 <IconCloud className="w-5 h-5 text-primary" strokeWidth={1.5} />
-fetch failed
+                {t("settings.autoJoin.title")}
               </h3>
               <div className="p-4 rounded-xl border border-border bg-muted/30">
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
-                    <div className="font-medium text-foreground">fetch failed</div>
-                    <p className="text-sm text-muted-foreground mt-1">fetch failed</p>
+                    <div className="font-medium text-foreground">{t("settings.autoJoin.label")}</div>
+                    <p className="text-sm text-muted-foreground mt-1">{t("settings.autoJoin.desc")}</p>
                   </div>
                   <button
                     onClick={() => setAutoJoinServer(!autoJoinServer)}
@@ -318,7 +346,7 @@ fetch failed
                 {autoJoinServer && (
                   <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="sm:col-span-2 space-y-1.5">
-                      <label className="block text-sm font-medium text-foreground">fetch failed</label>
+                      <label className="block text-sm font-medium text-foreground">{t("settings.autoJoin.ip")}</label>
                       <input
                         type="text"
                         value={serverAddress}
@@ -328,7 +356,7 @@ fetch failed
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="block text-sm font-medium text-foreground">fetch failed</label>
+                      <label className="block text-sm font-medium text-foreground">{t("settings.autoJoin.port")}</label>
                       <input
                         type="text"
                         value={serverPort}
@@ -339,6 +367,26 @@ fetch failed
                     </div>
                   </div>
                 )}
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <h3 className="text-lg font-medium text-foreground flex items-center gap-2">
+                <IconPlayerPlay className="w-5 h-5 text-primary" strokeWidth={1.75} />
+                {t("settings.afterLaunch.title")}
+              </h3>
+              <div className="p-4 rounded-xl border border-border bg-muted/30">
+                <p className="text-sm text-muted-foreground mb-3">{t("settings.afterLaunch.desc")}</p>
+                <Select value={afterLaunch} onValueChange={(v) => setAfterLaunch(v as "nothing" | "minimize" | "close")}>
+                  <SelectTrigger className="w-full max-w-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="nothing">{t("settings.afterLaunch.nothing")}</SelectItem>
+                    <SelectItem value="minimize">{t("settings.afterLaunch.minimize")}</SelectItem>
+                    <SelectItem value="close">{t("settings.afterLaunch.close")}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </section>
 
@@ -358,15 +406,15 @@ fetch failed
 
             <section className="space-y-4">
               <h3 className="text-lg font-medium text-foreground flex items-center gap-2">
-                <IconFolder className="w-5 h-5 text-primary" strokeWidth={1.5} />
-fetch failed
+                <IconFolder className="w-5 h-5 text-primary" strokeWidth={1.75} />
+                {t("settings.buildsFolder.title")}
               </h3>
               <div className="p-4 rounded-xl border border-border bg-muted/30">
-                <p className="text-sm text-muted-foreground mb-3">fetch failed</p>
+                <p className="text-sm text-muted-foreground mb-3">{t("settings.buildsFolder.desc")}</p>
                 <div className="flex items-center gap-3">
-                  <code className="flex-1 truncate rounded-lg bg-background/60 border border-border px-3 py-2 text-xs text-muted-foreground">{instancesRoot || "fetch failed"}</code>
+                  <code className="flex-1 truncate rounded-lg bg-background/60 border border-border px-3 py-2 text-xs text-muted-foreground">{instancesRoot || t("settings.buildsFolder.loading")}</code>
                   <button type="button" onClick={() => void handleChangeInstancesDir()} className="px-3 py-2 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 shrink-0">
-fetch failed
+                    {t("settings.buildsFolder.change")}
                   </button>
                 </div>
               </div>
@@ -374,7 +422,7 @@ fetch failed
 
             <section className="space-y-4">
               <h3 className="text-lg font-medium text-foreground flex items-center gap-2">
-                <IconShield className="w-5 h-5 text-primary" strokeWidth={1.5} />
+                <IconShield className="w-5 h-5 text-primary" strokeWidth={1.75} />
                 {t("settings.authlib")}
               </h3>
               <SettingsAuthlib
@@ -389,7 +437,7 @@ fetch failed
 
             <section className="space-y-4">
               <h3 className="text-lg font-medium text-foreground flex items-center gap-2">
-                <IconCloud className="w-5 h-5 text-primary" strokeWidth={1.5} />
+                <IconCloud className="w-5 h-5 text-primary" strokeWidth={1.75} />
                 fetch failed
               </h3>
               <div className="p-4 rounded-xl border border-border bg-muted/30">
@@ -427,6 +475,7 @@ fetch failed
               detectedJavaInstallations={detectedJavaInstallations}
               loadingJavaInstallations={loadingJavaInstallations}
               onPickJavaFile={handlePickJavaFile}
+              onRefreshJava={() => void loadJavaInstallations(true)}
             />
           </div>
         )}
@@ -449,6 +498,12 @@ fetch failed
         {activeSettingsTab === "ai" && (
           <div className="min-h-0 flex-1 overflow-y-auto pr-6">
             <SettingsAi />
+          </div>
+        )}
+
+        {activeSettingsTab === "storage" && (
+          <div className="min-h-0 flex-1 overflow-y-auto pr-6">
+            <SettingsStorage />
           </div>
         )}
 

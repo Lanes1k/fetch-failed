@@ -1,45 +1,143 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "react-i18next"
-import { IconCamera, IconTrash, IconExternalLink, IconFolderOpen } from "@tabler/icons-react"
+import { useAlertDialog } from "@/lib/use-alert-dialog"
+import {
+  IconCamera,
+  IconTrash,
+  IconExternalLink,
+  IconFolderOpen,
+  IconLock,
+  IconLockOpen,
+  IconArrowsExchange,
+  IconTools,
+  IconUnlink,
+  IconLink,
+  IconLoader2,
+  IconCheck,
+} from "@tabler/icons-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { MOD_LOADERS } from "./constants"
+import { BUILD_MOD_LOADERS } from "./constants"
 import { LoaderIcon } from "./loader-icon"
 import { IconPickerModal } from "./icon-picker-modal"
+import { EntityIcon } from "./entity-icon"
+import { PlatformBadge } from "@/components/launcher/platform-icon"
+import { ModpackChangeVersionDialog } from "./modpack-change-version-dialog"
+import { ActionConfirmDialog } from "./action-confirm-dialog"
 import { useMinecraftVersionOptions } from "@/src/hooks/use-minecraft-version-options"
 import { useLoaderVersionOptions } from "@/src/hooks/use-loader-version-options"
+import { useActivityCenter } from "@/src/ActivityCenterContext"
+import { formatPlaytime } from "@/lib/format"
 import type { Build } from "./types"
-
-function formatPlaytime(seconds: number): string {
-  if (seconds < 60) return `fetch failed`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `fetch failed`
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-  if (hours < 24) return mins > 0 ? `fetch failed` : `fetch failed`
-  const days = Math.floor(hours / 24)
-  const hrs = hours % 24
-  return hrs > 0 ? `fetch failed` : `fetch failed`
-}
 
 interface InstanceDetailGeneralProps {
   activeBuild: Build
   updateBuild: (id: string, fields: Partial<Build>) => void
   renameBuild: (id: string, newName: string) => Promise<{ success: boolean; error?: string }>
+  /** Перемещение сборки в корзину (с восстановлением со страницы «Корзина»). */
+  onTrash: (id: string) => Promise<boolean>
 }
 
-export function InstanceDetailGeneral({ activeBuild, updateBuild, renameBuild }: InstanceDetailGeneralProps) {
+export function InstanceDetailGeneral({ activeBuild, updateBuild, renameBuild, onTrash }: InstanceDetailGeneralProps) {
   const { t } = useTranslation()
+  const { pushNotification } = useActivityCenter()
   const savedNameRef = useRef(activeBuild.name)
   const [showIconPicker, setShowIconPicker] = useState(false)
   const { visibleVersions, versionsLoaded } = useMinecraftVersionOptions()
-  const { loaderVersions, loaderVersionsLoaded, recommendedLoaderVersion } = useLoaderVersionOptions(activeBuild.modLoader, activeBuild.version)
+  const { loaderVersions, loaderVersionsLoaded, defaultLoaderVersion } = useLoaderVersionOptions(activeBuild.modLoader, activeBuild.version)
   const buildHasImage = !!activeBuild.icon
   const availableVersions = visibleVersions.includes(activeBuild.version)
     ? visibleVersions
     : [activeBuild.version, ...visibleVersions.filter((item) => item !== activeBuild.version)]
   const formattedCreatedAt = new Date(activeBuild.createdAt).toLocaleDateString()
   const showLoaderVersionSelect = activeBuild.modLoader !== "vanilla" && activeBuild.modLoader !== "instance"
+
+  const [showChangeVersionDialog, setShowChangeVersionDialog] = useState(false)
+  const [showTrashDialog, setShowTrashDialog] = useState(false)
+  const [showUnlinkConfirm, setShowUnlinkConfirm] = useState(false)
+  const [showRepairConfirm, setShowRepairConfirm] = useState(false)
+  const [dialogAlert, setDialogAlert] = useState<{ title: string; message: string } | null>(null)
+  const [repairing, setRepairing] = useState(false)
+  const [repairDone, setRepairDone] = useState(false)
+  const { showAlert, alertDialog } = useAlertDialog()
+
+  const isModpack = Boolean(
+    (activeBuild.source === "modrinth" && activeBuild.projectSlug) ||
+    (activeBuild.source === "curseforge" && activeBuild.modId)
+  )
+  const isLocked = isModpack && activeBuild.locked !== false
+
+  const handleToggleLock = () => {
+    if (isLocked) {
+      setShowUnlinkConfirm(true)
+    } else {
+      updateBuild(activeBuild.id, { locked: true })
+    }
+  }
+
+  const confirmUnlink = () => {
+    updateBuild(activeBuild.id, { locked: false })
+  }
+
+  const executeRepair = async () => {
+    if (repairing) return
+    setRepairing(true)
+    setRepairDone(false)
+    try {
+      if (activeBuild.source === "modrinth" && activeBuild.projectSlug) {
+        const res = await window.electronAPI?.importModrinthModpack(
+          activeBuild.name,
+          activeBuild.projectSlug,
+          activeBuild.modpackVersionId,
+          activeBuild.id
+        )
+        if (res?.success) {
+          updateBuild(activeBuild.id, {
+            version: res.version || activeBuild.version,
+            modLoader: res.modLoader || activeBuild.modLoader,
+            loaderVersion: res.loaderVersion || activeBuild.loaderVersion,
+            mods: res.mods ?? activeBuild.mods,
+          })
+          setRepairDone(true)
+          setTimeout(() => setRepairDone(false), 3000)
+        } else {
+          setDialogAlert({
+            title: t("buildDetail.repair.errorTitle"),
+            message: res?.error || t("buildDetail.repair.errorMessage"),
+          })
+        }
+      } else if (activeBuild.source === "curseforge" && activeBuild.modId && activeBuild.fileId) {
+        const res = await window.electronAPI?.importCurseforgeModpack(
+          activeBuild.name,
+          activeBuild.modId,
+          activeBuild.fileId,
+          activeBuild.id
+        )
+        if (res?.success) {
+          updateBuild(activeBuild.id, {
+            version: res.version || activeBuild.version,
+            modLoader: res.modLoader || activeBuild.modLoader,
+            loaderVersion: res.loaderVersion || activeBuild.loaderVersion,
+            mods: res.mods ?? activeBuild.mods,
+          })
+          setRepairDone(true)
+          setTimeout(() => setRepairDone(false), 3000)
+        } else {
+          setDialogAlert({
+            title: t("buildDetail.repair.errorTitle"),
+            message: res?.error || t("buildDetail.repair.errorMessage"),
+          })
+        }
+      }
+    } catch (err: any) {
+      setDialogAlert({
+        title: t("buildDetail.repair.errorTitle"),
+        message: err?.message || String(err),
+      })
+    } finally {
+      setRepairing(false)
+    }
+  }
 
   const handleNameBlur = async () => {
     const current = activeBuild.name.trim()
@@ -51,9 +149,41 @@ export function InstanceDetailGeneral({ activeBuild, updateBuild, renameBuild }:
     } else {
       // Revert to the last saved name if the folder could not be renamed.
       updateBuild(activeBuild.id, { name: saved })
-      alert(result.error ?? "fetch failed")
+      showAlert(result.error ?? t("buildDetail.rename.error"))
     }
   }
+
+  /**
+   * Профиль старого загрузчика остаётся в папке сборки после смены загрузчика
+   * или его версии и конфликтует с новым. Убираем его сразу при смене —
+   * дополнительно то же самое делает лаунчер перед каждым запуском.
+   */
+  const pruneStaleLoaders = useCallback((modLoader: string, loaderVersion?: string) => {
+    if (!activeBuild.name) return
+    void window.electronAPI?.pruneLoaderProfiles(activeBuild.name, modLoader, loaderVersion)
+      .then((result) => {
+        if (!result?.removed?.length) return
+        // Профиль прежнего загрузчика реально стёрт с диска — показываем это,
+        // иначе из интерфейса непонятно, что старый загрузчик удалён.
+        pushNotification({
+          kind: "info",
+          source: "install",
+          title: t("launchStage.removedPreviousLoaderTitle"),
+          message: t("launchStage.removedPreviousLoaderMessage", { loaders: result.removed.join(", ") }),
+        })
+      })
+      .catch(() => {})
+  }, [activeBuild.name, pushNotification, t])
+
+  const handleModLoaderChange = useCallback((value: string) => {
+    updateBuild(activeBuild.id, { modLoader: value, loaderVersion: undefined })
+    pruneStaleLoaders(value, undefined)
+  }, [activeBuild.id, pruneStaleLoaders, updateBuild])
+
+  const handleLoaderVersionChange = useCallback((value: string) => {
+    updateBuild(activeBuild.id, { loaderVersion: value })
+    pruneStaleLoaders(activeBuild.modLoader, value)
+  }, [activeBuild.id, activeBuild.modLoader, pruneStaleLoaders, updateBuild])
 
   useEffect(() => {
     if (!showLoaderVersionSelect) {
@@ -63,8 +193,8 @@ export function InstanceDetailGeneral({ activeBuild, updateBuild, renameBuild }:
 
     if (!loaderVersionsLoaded) return
     if (loaderVersions.some(option => option.value === activeBuild.loaderVersion)) return
-    updateBuild(activeBuild.id, { loaderVersion: recommendedLoaderVersion || undefined })
-  }, [activeBuild.id, activeBuild.loaderVersion, loaderVersions, loaderVersionsLoaded, recommendedLoaderVersion, showLoaderVersionSelect, updateBuild])
+    updateBuild(activeBuild.id, { loaderVersion: defaultLoaderVersion || undefined })
+  }, [activeBuild.id, activeBuild.loaderVersion, loaderVersions, loaderVersionsLoaded, defaultLoaderVersion, showLoaderVersionSelect, updateBuild])
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -80,7 +210,7 @@ export function InstanceDetailGeneral({ activeBuild, updateBuild, renameBuild }:
               onClick={() => setShowIconPicker(true)}
             >
               {buildHasImage ? (
-                <img src={activeBuild.icon} alt="" className="h-full w-full object-cover" />
+                <EntityIcon src={activeBuild.icon} className="h-full w-full p-3 text-primary" imgClassName="h-full w-full object-cover" />
               ) : (
                 <div className="flex h-full w-full items-center justify-center">
                   <IconCamera className="h-10 w-10 text-muted-foreground/50" />
@@ -88,8 +218,8 @@ export function InstanceDetailGeneral({ activeBuild, updateBuild, renameBuild }:
               )}
             </div>
 
-            <div className="mt-4 text-sm font-medium text-foreground">{activeBuild.name || "fetch failed"}</div>
-            <div className="mt-1 text-xs text-muted-foreground">fetch failed</div>
+            <div className="mt-4 text-sm font-medium text-foreground">{activeBuild.name || t("buildDetail.newBuild")}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{t("buildDetail.changeIconHint")}</div>
 
             {buildHasImage && (
               <button
@@ -105,132 +235,221 @@ export function InstanceDetailGeneral({ activeBuild, updateBuild, renameBuild }:
 
           <div className="mt-6 grid gap-3 rounded-2xl border border-border/70 bg-muted/20 p-4 text-left">
             <div>
-              <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">fetch failed</div>
+              <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("buildDetail.played")}</div>
               <div className="mt-1 text-sm text-foreground">{formatPlaytime(activeBuild.playtime ?? 0)}</div>
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">fetch failed</div>
+              <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("buildDetail.created")}</div>
               <div className="mt-1 text-sm text-foreground">{formattedCreatedAt}</div>
             </div>
           </div>
         </div>
 
-        <div className="grid gap-5 rounded-3xl border border-border bg-card/40 p-6">
-          <div className="grid gap-1">
-            <div className="text-xl font-semibold text-foreground">fetch failed</div>
-            <div className="text-sm text-muted-foreground">
-fetch failed
-            </div>
-          </div>
-
-          <div className="grid gap-5">
+        <div className="flex flex-col gap-4 rounded-3xl border border-border bg-card/40 p-5">
+          <div className="flex flex-col gap-4">
             <div>
-              <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("builds.name")}</label>
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("builds.name")}</label>
               <input
                 type="text"
                 value={activeBuild.name}
                 onChange={e => updateBuild(activeBuild.id, { name: e.target.value })}
                 onBlur={handleNameBlur}
                 onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur() }}
-                className="h-12 w-full rounded-2xl border border-border bg-muted/40 px-4 text-sm text-foreground focus:outline-none focus:border-primary"
+                className="h-10 w-full rounded-xl border border-border bg-muted/40 px-3.5 text-sm text-foreground focus:outline-none focus:border-primary"
               />
             </div>
 
             <div>
-              <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("builds.description")}</label>
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("builds.description")}</label>
               <textarea
                 value={activeBuild.description}
                 onChange={e => updateBuild(activeBuild.id, { description: e.target.value })}
-                rows={5}
-                className="w-full rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary resize-none"
+                rows={2}
+                className="w-full rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary resize-none"
               />
             </div>
 
-            <div className={showLoaderVersionSelect ? "grid gap-4 lg:grid-cols-3" : "grid gap-4 lg:grid-cols-2"}>
-              <div>
-                <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("builds.version")}</label>
-                <Select value={activeBuild.version} onValueChange={(value) => updateBuild(activeBuild.id, { version: value })}>
-                  <SelectTrigger className="h-12 w-full rounded-2xl border-border bg-muted/40 text-foreground">
-                    <SelectValue placeholder={versionsLoaded ? t("builds.version") : "Loading..."} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableVersions.map((item) => (
-                      <SelectItem key={item} value={item}>Minecraft {item}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("builds.modLoader")}</label>
-                <Select value={activeBuild.modLoader} onValueChange={(value) => updateBuild(activeBuild.id, { modLoader: value, loaderVersion: undefined })}>
-                  <SelectTrigger className="h-12 w-full rounded-2xl border-border bg-muted/40 text-foreground">
-                    <SelectValue placeholder={t("builds.modLoader")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MOD_LOADERS.map((item) => (
-                      <SelectItem key={item.id} value={item.id}>
-                        <span className="flex items-center gap-2">
-                          <LoaderIcon loaderId={item.id} className="w-4 h-4 flex-shrink-0" />
-                          {item.name}
+            {isModpack && isLocked && (
+              <div className="rounded-2xl border border-border/80 bg-muted/20 p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {activeBuild.icon ? (
+                      <EntityIcon src={activeBuild.icon} className="w-10 h-10 p-0.5 rounded-xl text-primary" imgClassName="w-10 h-10 rounded-xl object-cover shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-base shrink-0">
+                        {activeBuild.name[0]}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm text-foreground truncate">{activeBuild.name}</span>
+                        <PlatformBadge source={activeBuild.source} showLabel className="text-[10px] py-0.5 px-1.5" />
+                        {activeBuild.projectSlug && (
+                          <button
+                            type="button"
+                            onClick={() => window.open(`https://modrinth.com/modpack/${activeBuild.projectSlug}`, "_blank")}
+                            title={t("buildDetail.openOnModrinth")}
+                            className="text-muted-foreground hover:text-primary transition-colors"
+                          >
+                            <IconExternalLink className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
+                        <span className="font-medium text-foreground/80">
+                          {activeBuild.modpackVersion ? t("buildDetail.modpackVersion", { version: activeBuild.modpackVersion }) : activeBuild.version}
                         </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {showLoaderVersionSelect && (
-                <div>
-                  <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">fetch failed</label>
-                  <Select value={activeBuild.loaderVersion ?? ""} onValueChange={(value) => updateBuild(activeBuild.id, { loaderVersion: value })} disabled={!loaderVersionsLoaded || loaderVersions.length === 0}>
-                    <SelectTrigger className="h-12 w-full rounded-2xl border-border bg-muted/40 text-foreground">
-                      <SelectValue placeholder={loaderVersionsLoaded ? "Loader Version" : "Loading..."} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {!loaderVersionsLoaded ? <div className="px-3 py-2 text-sm text-muted-foreground">fetch failed</div>
-                        : loaderVersions.length === 0 ? <div className="px-3 py-2 text-sm text-muted-foreground">fetch failed</div>
-                        : loaderVersions.map((item) => (
-                          <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {!loaderVersionsLoaded ? "Loading available loader versions..." : activeBuild.loaderVersion ? `Current loader version: ${activeBuild.loaderVersion}` : "Choose an exact loader version for this profile"}
-                  </p>
+                        <span>•</span>
+                        <span className="inline-flex items-center gap-1.5 capitalize font-medium text-foreground/90">
+                          <LoaderIcon loaderId={activeBuild.modLoader} className="w-3.5 h-3.5 shrink-0" />
+                          <span>{activeBuild.modLoader}</span>
+                        </span>
+                        <span>•</span>
+                        <span>{activeBuild.version}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setShowRepairConfirm(true)}
+                      disabled={repairing}
+                      title={t("buildDetail.repair.tooltip")}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border bg-card hover:bg-muted text-xs font-medium text-foreground transition-colors"
+                    >
+                      {repairing ? (
+                        <IconLoader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                      ) : repairDone ? (
+                        <IconCheck className="w-3.5 h-3.5 text-green-500" />
+                      ) : (
+                        <IconTools className="w-3.5 h-3.5 text-muted-foreground" />
+                      )}
+                      <span>{repairing ? t("buildDetail.repair.repairing") : repairDone ? t("buildDetail.repair.done") : t("buildDetail.repair.action")}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowChangeVersionDialog(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-medium transition-colors shadow-sm"
+                    >
+                      <IconArrowsExchange className="w-3.5 h-3.5" />
+                      <span>{t("buildDetail.changeVersion")}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleToggleLock}
+                      title={t("buildDetail.unlink.tooltip")}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border/80 bg-muted/40 hover:bg-muted text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <IconUnlink className="w-3.5 h-3.5" />
+                      <span>{t("buildDetail.unlink.action")}</span>
+                    </button>
+                  </div>
                 </div>
-              )}
-            </div>
 
-
-            {activeBuild.projectSlug && (
-              <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm">
-                <div className="text-muted-foreground">
-                  <span className="text-muted-foreground/70">{t("builds.source")}: </span>
-                  <button
-                    type="button"
-                    onClick={() => window.open(`https://modrinth.com/modpack/${activeBuild.projectSlug}`, "_blank")}
-                    className="inline-flex items-center gap-1.5 text-primary hover:underline"
-                  >
-                    <IconExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    Modrinth — {activeBuild.projectSlug}
-                  </button>
+                <div className="mt-3 pt-3 border-t border-border/50 flex items-center gap-2 text-xs text-muted-foreground">
+                  <IconLock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span>{t("buildDetail.lockedNotice")}</span>
                 </div>
               </div>
             )}
 
-            <div className="flex flex-wrap gap-3">
-              {activeBuild.intentPath && (
+            {isModpack && !isLocked && (
+              <div className="flex items-center justify-between gap-3 p-3 rounded-2xl border border-border/70 bg-muted/20 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <IconLockOpen className="w-4 h-4 text-muted-foreground" />
+                  <span>{t("buildDetail.unlinkedNotice")}</span>
+                </div>
                 <button
                   type="button"
-                  onClick={() => window.electronAPI?.openPath(activeBuild.intentPath!)}
-                  className="flex items-center gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground transition-colors hover:bg-muted"
+                  onClick={handleToggleLock}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border bg-card hover:bg-muted text-xs font-medium text-foreground transition-colors shrink-0"
                 >
-                  <IconFolderOpen className="h-4 w-4" strokeWidth={1.75} />
-fetch failed
+                  <IconLink className="w-3 h-3 text-primary" />
+                  <span>{t("buildDetail.relink")}</span>
                 </button>
-              )}
-              <div className="flex items-center rounded-2xl border border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-                {t("builds.created", { date: formattedCreatedAt })}
+              </div>
+            )}
+
+            {(!isModpack || !isLocked) && (
+              <div className={showLoaderVersionSelect ? "grid gap-3 lg:grid-cols-3" : "grid gap-3 lg:grid-cols-2"}>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("builds.version")}</label>
+                  <Select value={activeBuild.version} onValueChange={(value) => updateBuild(activeBuild.id, { version: value })}>
+                    <SelectTrigger className="h-10 w-full rounded-xl border-border bg-muted/40 text-foreground">
+                      <SelectValue placeholder={versionsLoaded ? t("builds.version") : t("home.loadingVersions")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableVersions.map((item) => (
+                        <SelectItem key={item} value={item}>{item}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("builds.modLoader")}</label>
+                  <Select value={activeBuild.modLoader} onValueChange={handleModLoaderChange}>
+                    <SelectTrigger className="h-10 w-full rounded-xl border-border bg-muted/40 text-foreground">
+                      <SelectValue placeholder={t("builds.modLoader")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {BUILD_MOD_LOADERS.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          <span className="flex items-center gap-2">
+                            <LoaderIcon loaderId={item.id} className="w-4 h-4 flex-shrink-0" />
+                            {item.name}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {showLoaderVersionSelect && (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("home.loaderVersion")}</label>
+                    <Select value={activeBuild.loaderVersion ?? ""} onValueChange={handleLoaderVersionChange} disabled={!loaderVersionsLoaded || loaderVersions.length === 0}>
+                      <SelectTrigger className="h-10 w-full rounded-xl border-border bg-muted/40 text-foreground">
+                        <SelectValue placeholder={loaderVersionsLoaded ? t("home.loaderVersion") : t("home.loadingVersions")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {!loaderVersionsLoaded ? <div className="px-3 py-2 text-sm text-muted-foreground">{t("home.loaderVersionLoading")}</div>
+                          : loaderVersions.length === 0 ? <div className="px-3 py-2 text-sm text-muted-foreground">{t("home.noLoaderVersions")}</div>
+                          : loaderVersions.map((item) => (
+                            <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-3 pt-2 border-t border-border/50 flex-wrap">
+              <div className="flex items-center gap-4">
+                {activeBuild.intentPath && (
+                  <button
+                    type="button"
+                    onClick={() => window.electronAPI?.openPath(activeBuild.intentPath!)}
+                    className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3.5 py-2 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                  >
+                    <IconFolderOpen className="h-4 w-4" strokeWidth={1.75} />
+                    {t("buildDetail.openGameFolder")}
+                  </button>
+                )}
+                {/* Удаление сборки перенесено сюда из контекстного меню списка:
+                    на странице сборки действие должно быть под рукой. */}
+                <button
+                  type="button"
+                  onClick={() => setShowTrashDialog(true)}
+                  className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-2 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
+                >
+                  <IconTrash className="h-4 w-4" strokeWidth={1.75} />
+                  {t("instanceList.toTrash")}
+                </button>
               </div>
             </div>
           </div>
@@ -243,6 +462,74 @@ fetch failed
         value={activeBuild.icon}
         onChange={(icon) => updateBuild(activeBuild.id, { icon })}
       />
+
+      <ModpackChangeVersionDialog
+        open={showChangeVersionDialog}
+        onClose={() => setShowChangeVersionDialog(false)}
+        build={activeBuild}
+        onVersionChanged={(info) => {
+          updateBuild(activeBuild.id, {
+            modpackVersion: info.modpackVersion,
+            modpackVersionId: info.modpackVersionId,
+            version: info.version,
+            modLoader: info.modLoader,
+            loaderVersion: info.loaderVersion,
+            mods: info.mods ?? activeBuild.mods,
+            resourcepacks: info.resourcepacks ?? activeBuild.resourcepacks,
+            shaders: info.shaders ?? activeBuild.shaders,
+          })
+        }}
+      />
+
+      <ActionConfirmDialog
+        open={showUnlinkConfirm}
+        onClose={() => setShowUnlinkConfirm(false)}
+        onConfirm={confirmUnlink}
+        title={t("buildDetail.unlink.title")}
+        description={t("buildDetail.unlink.description")}
+        confirmText={t("buildDetail.unlink.confirm")}
+        cancelText={t("common.cancel")}
+        variant="warning"
+        icon="unlink"
+      />
+
+      <ActionConfirmDialog
+        open={showRepairConfirm}
+        onClose={() => setShowRepairConfirm(false)}
+        onConfirm={executeRepair}
+        title={t("buildDetail.repairConfirm.title")}
+        description={t("buildDetail.repairConfirm.description")}
+        confirmText={t("buildDetail.repairConfirm.confirm")}
+        cancelText={t("common.cancel")}
+        variant="info"
+        icon="repair"
+      />
+
+      <ActionConfirmDialog
+        open={showTrashDialog}
+        onClose={() => setShowTrashDialog(false)}
+        onConfirm={() => { void onTrash(activeBuild.id) }}
+        title={t("buildDetail.trashTitle")}
+        description={t("buildDetail.trashDesc", { name: activeBuild.name })}
+        confirmText={t("buildDetail.trashConfirm")}
+        cancelText={t("common.cancel")}
+        variant="danger"
+        icon="warning"
+      />
+
+      {dialogAlert && (
+        <ActionConfirmDialog
+          open={true}
+          onClose={() => setDialogAlert(null)}
+          title={dialogAlert.title}
+          description={dialogAlert.message}
+          type="alert"
+          variant="danger"
+          icon="warning"
+        />
+      )}
+
+      {alertDialog}
     </div>
   )
 }

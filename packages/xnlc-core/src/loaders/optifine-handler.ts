@@ -61,10 +61,10 @@ export function parseOptifineFilename(name: string): Omit<OptifineVersion, "down
 export function optifineVersionId(mcVersion: string, filename: string): string {
   const parsed = parseOptifineFilename(filename);
   if (!parsed) {
-    throw new Error(`Invalid OptiFine filename: ${filename}`);
+    throw new Error(`fetch failed${filename}`);
   }
   if (parsed.mcVersion !== mcVersion) {
-    throw new Error(`OptiFine filename Minecraft mismatch: expected ${mcVersion}, got ${parsed.mcVersion}`);
+    throw new Error(`fetch failed${mcVersion}fetch failed${parsed.mcVersion}`);
   }
   return `${mcVersion}-OptiFine_${parsed.edition}_${parsed.release}`;
 }
@@ -87,7 +87,7 @@ export class OptifineHandler implements ILoaderHandler {
   async getSupportedVersions(): Promise<string[]> {
     const res = await fetch(URLS.official.optifine.downloads);
     if (!res.ok) {
-      throw new Error(`Failed to fetch OptiFine downloads: ${res.status}`);
+      throw new Error(`fetch failed${res.status}`);
     }
 
     const html = await res.text();
@@ -119,7 +119,7 @@ export class OptifineHandler implements ILoaderHandler {
   async getAllVersions(): Promise<OptifineVersion[]> {
     const res = await fetch(URLS.official.optifine.downloads);
     if (!res.ok) {
-      throw new Error(`Failed to fetch OptiFine downloads: ${res.status}`);
+      throw new Error(`fetch failed${res.status}`);
     }
 
     const html = await res.text();
@@ -148,7 +148,7 @@ export class OptifineHandler implements ILoaderHandler {
   async getOptifineVersions(mcVersion: string): Promise<OptifineVersion[]> {
     const res = await fetch(URLS.official.optifine.downloads);
     if (!res.ok) {
-      throw new Error(`Failed to fetch OptiFine downloads: ${res.status}`);
+      throw new Error(`fetch failed${res.status}`);
     }
 
     const html = await res.text();
@@ -245,7 +245,7 @@ export class OptifineHandler implements ILoaderHandler {
 
     const clientUrl = vanilla.downloads?.client?.url;
     if (!clientUrl) {
-      throw new Error(`No vanilla client download found for Minecraft ${mcVersion}`);
+      throw new Error(`fetch failed${mcVersion}`);
     }
 
     await this.downloader.download({
@@ -277,7 +277,7 @@ export class OptifineHandler implements ILoaderHandler {
       };
     }
 
-    throw new Error(`OptiFine version not found for Minecraft ${mcVersion}: ${loaderVersion}`);
+    throw new Error(`fetch failed${mcVersion}: ${loaderVersion}`);
   }
 
   private async findVersion(
@@ -430,7 +430,7 @@ export class OptifineHandler implements ILoaderHandler {
     });
 
     if (!fs.existsSync(outputJar)) {
-      throw new Error("OptiFine patcher completed but output jar was not created");
+      throw new Error("fetch failed");
     }
   }
 }

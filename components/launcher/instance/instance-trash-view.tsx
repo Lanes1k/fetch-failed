@@ -1,104 +1,72 @@
-import { useCallback, useEffect, useState } from "react"
-import { IconTrash, IconRefresh, IconFolder } from "@tabler/icons-react"
-import { cn } from "@/lib/utils"
+// Корзина сборок: содержимое строк и IPC — здесь, вся общая логика в TrashView.
+
+import { useTranslation } from "react-i18next"
+import { IconPackage } from "@tabler/icons-react"
+import { TrashView } from "../trash-view"
+import { LoaderIcon } from "./loader-icon"
 
 interface TrashItem {
   trashName: string
   originalName: string
   trashedAt: number
+  icon?: string
+  modLoader?: string
 }
 
 interface InstanceTrashViewProps {
   goToMyBuilds: () => void
+  /** Восстанавливает сборку из корзины: папку, запись в БД и состояние списка. */
+  onRestore: (item: { trashName: string; originalName: string }) => Promise<boolean>
 }
 
-export function InstanceTrashView({ goToMyBuilds }: InstanceTrashViewProps) {
-  const [items, setItems] = useState<TrashItem[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const loadTrash = useCallback(async () => {
-    setLoading(true)
-    try {
-      const result = await window.electronAPI?.listTrashBuilds()
-      setItems(result ?? [])
-    } catch {
-      setItems([])
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { loadTrash() }, [loadTrash])
-
-  const handleRestore = useCallback(async (item: TrashItem) => {
-    if (!window.electronAPI) return
-    await window.electronAPI.restoreBuildIntentFromTrash(item.originalName, item.trashName)
-    await loadTrash()
-    goToMyBuilds()
-  }, [loadTrash, goToMyBuilds])
-
-  const handleDeleteForever = useCallback(async (item: TrashItem) => {
-    if (!window.electronAPI) return
-    await window.electronAPI.deleteTrashItem(item.trashName)
-    await loadTrash()
-  }, [loadTrash])
-
-  const handlePurgeAll = useCallback(async () => {
-    if (!window.electronAPI) return
-    await window.electronAPI.purgeBuildTrash()
-    setItems([])
-  }, [])
-
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-fetch failed
-      </div>
-    )
-  }
-
-  if (items.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-fetch failed
-      </div>
-    )
-  }
+export function InstanceTrashView({ goToMyBuilds, onRestore }: InstanceTrashViewProps) {
+  const { t } = useTranslation()
 
   return (
-    <div className="flex-1 space-y-3">
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-xs text-muted-foreground">{items.length}fetch failed(fetch failed)</p>
-        <button type="button" onClick={handlePurgeAll}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors">
-          <IconTrash className="w-3.5 h-3.5" />
-fetch failed
-        </button>
-      </div>
-
-      {items.map((item) => (
-        <div key={item.trashName}
-          className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card hover:bg-muted/50 transition-colors">
-          <div className="w-9 h-9 rounded-lg bg-muted/60 flex items-center justify-center shrink-0">
-            <IconTrash className="w-4 h-4 text-muted-foreground" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-foreground truncate">{item.originalName}</p>
-            <p className="text-xs text-muted-foreground">
-fetch failed{new Date(item.trashedAt).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-            </p>
-          </div>
-          <button type="button" onClick={() => handleRestore(item)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors">
-            <IconRefresh className="w-3.5 h-3.5" />
-fetch failed
-          </button>
-          <button type="button" onClick={() => handleDeleteForever(item)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors">
-            <IconTrash className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ))}
-    </div>
+    <TrashView<TrashItem>
+      load={async () => (await window.electronAPI?.listTrashBuilds()) ?? []}
+      row={(item) => ({
+        key: item.trashName,
+        name: item.originalName,
+        icon: item.icon,
+        fallbackIcon: item.modLoader
+          ? <LoaderIcon loaderId={item.modLoader} className="w-5 h-5 text-primary/40" />
+          : <IconPackage className="w-5 h-5 text-primary/40" />,
+        extra: (
+          <p className="text-xs text-muted-foreground">
+            {t("trash.deletedAt", { date: new Date(item.trashedAt).toLocaleDateString() })}
+          </p>
+        ),
+      })}
+      onRestore={onRestore}
+      onDeleteForever={async (item) => {
+        const result = await window.electronAPI?.deleteTrashItem(item.trashName)
+        if (result && !result.success) throw new Error(result.error ?? t("trash.error.delete"))
+      }}
+      onPurgeAll={async () => {
+        const result = await window.electronAPI?.purgeBuildTrash()
+        if (result && !result.success) throw new Error(result.error ?? t("trash.error.purge"))
+      }}
+      afterRestore={goToMyBuilds}
+      labels={{
+        loading: t("trash.loading"),
+        empty: t("trash.empty"),
+        itemCount: (count) => t("trash.itemsCount", { count }),
+        restore: t("trash.restore"),
+        purgeAll: t("trash.purge"),
+        deleteForeverTitle: t("trash.deleteForever.title"),
+        deleteForeverDescription: (name) => t("trash.deleteForever.description", { name }),
+        deleteForeverConfirm: t("trash.deleteForever.confirm"),
+        purgeConfirmTitle: t("trash.purgeConfirm.title"),
+        purgeConfirmDescription: (count) => t("trash.purgeConfirm.description", { count }),
+        purgeConfirmConfirm: t("trash.purgeConfirm.confirm"),
+        cancel: t("common.cancel"),
+        errorTitle: t("trash.errorTitle"),
+        errorRestore: t("trash.error.restore"),
+        errorDelete: t("trash.error.delete"),
+        errorPurge: t("trash.error.purge"),
+        gotIt: t("common.gotIt"),
+      }}
+    />
   )
 }

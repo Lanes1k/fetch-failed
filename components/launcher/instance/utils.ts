@@ -1,5 +1,6 @@
 import { MOD_LOADERS } from "./constants"
-import type { Build, ModVersion } from "./types"
+import type { Build, ModSearchResult, ModVersion } from "./types"
+import i18n from "@/src/i18n"
 
 export function loadBuilds(): Build[] {
   const saved = localStorage.getItem("xneon-launcher:builds:legacy")
@@ -8,7 +9,7 @@ export function loadBuilds(): Build[] {
     if (hasLegacy) {
       const migrated: Build[] = hasLegacy.map(build => ({
         id: build.id ?? crypto.randomUUID(),
-        name: build.name ?? "fetch failed",
+        name: build.name ?? i18n.t("builds.untitled"),
         description: build.description ?? "",
         version: build.version ?? "",
         modLoader: build.modLoader ?? MOD_LOADERS[0].id,
@@ -38,8 +39,44 @@ export function formatDownloads(num: number) {
   return String(num)
 }
 
+/**
+ * Тэги FTB — свалка из категорий, версий Minecraft и загрузчиков, а тегом «FTB»
+ * помечены 75 паков из 87. Показываем только настоящие категории (`Tech`,
+ * `Magic`, `Skyblock`): версия и загрузчик у пака уже есть отдельными полями,
+ * а «FTB» внутри каталога FTB не сообщает ничего.
+ *
+ * Держать в синхроне с `isFtbCategoryTag` в `packages/xnlc-mods/src/ftb-client.ts`
+ * (оттуда его не импортировать: тот пакет тянет `node:fs` и живёт только в main).
+ */
+const FTB_NOISE_TAGS = new Set(["ftb", "forge", "neoforge", "fabric", "quilt", "liteloader", "vanilla"])
+
+export function isFtbCategoryTag(tag: string): boolean {
+  const value = tag.trim().toLowerCase()
+  if (!value || FTB_NOISE_TAGS.has(value)) return false
+  return !/^\d+\.\d+(\.\d+)?$/.test(value)
+}
+
 function parseVersionList(gameVersion: string) {
   return gameVersion.split(/[|,/]/).map(item => item.trim()).filter(Boolean)
+}
+
+/** Совпадает ли загрузчик версии с загрузчиком сборки (без учёта версии Minecraft) */
+export function matchesBuildLoader(version: ModVersion, build: Build): boolean {
+  const buildLoader = (build.modLoader ?? "").toLowerCase().trim()
+  // "instance" — модпак-инстанс со своим набором модов, фильтровать нечем
+  if (!buildLoader || buildLoader === "instance") return true
+
+  const loaders = version.loaders?.map(loader => String(loader).toLowerCase().trim()).filter(Boolean) ?? []
+
+  if (buildLoader === "vanilla") {
+    return loaders.length === 0
+  }
+
+  if (loaders.length === 0) {
+    return false
+  }
+
+  return loaders.includes(buildLoader)
 }
 
 export function matchesBuildVersion(version: ModVersion, build: Build, requireLoaderMatch = true) {
@@ -52,26 +89,106 @@ export function matchesBuildVersion(version: ModVersion, build: Build, requireLo
     return true
   }
 
-  const loaders = version.loaders?.map(loader => loader.toLowerCase()) ?? []
-  if (build.modLoader === "vanilla") {
-    return loaders.length === 0
-  }
-
-  if (loaders.length === 0) {
-    return false
-  }
-
-  return loaders.includes(build.modLoader.toLowerCase())
+  return matchesBuildLoader(version, build)
 }
 
-export function pickCompatibleVersion(versions: ModVersion[] | undefined, build: Build, requireLoaderMatch = true) {
+/**
+ * Разбивает список версий проекта на группы совместимости:
+ * exact  — подходит и версия Minecraft, и загрузчик;
+ * byLoader — подходит только загрузчик (другая версия Minecraft);
+ * all    — вообще все версии проекта.
+ */
+export function groupVersionsByCompatibility(
+  versions: ModVersion[],
+  build: Build | null,
+  requireLoaderMatch = true,
+): { exact: ModVersion[]; byLoader: ModVersion[]; all: ModVersion[] } {
+  if (!build) return { exact: versions, byLoader: versions, all: versions }
+
+  const exact = versions.filter(version => matchesBuildVersion(version, build, requireLoaderMatch))
+  const byLoader = requireLoaderMatch
+    ? versions.filter(version => matchesBuildLoader(version, build))
+    : versions
+
+  return { exact, byLoader, all: versions }
+}
+
+/**
+ * Ключ версии для сравнения: «1.10.7+1.21.11-neoforge» → «1.10.7»,
+ * «Iris 1.10.7 for NeoForge 1.21.11» → «1.10.7».
+ */
+export function versionKey(value?: string | null): string {
+  if (!value) return ""
+  const text = String(value)
+  const match = text.match(/\d+(?:\.\d+)+/)
+  return match ? match[0] : text.trim().toLowerCase()
+}
+
+/**
+ * Совпадает ли версия из каталога с установленной.
+ * В сборке хранится версия из метаданных jar («1.10.7+1.21.11-neoforge»), а в
+ * каталоге версия названа иначе («Iris 1.10.7 for NeoForge 1.21.11»), поэтому
+ * сравниваем и точно, и по главной части номера.
+ */
+export function isInstalledVersion(version: ModVersion, installed?: string | null): boolean {
+  if (!installed) return false
+  const target = String(installed).trim().toLowerCase()
+  const variants = [version.id, version.name, version.versionNumber, version.fileName]
+    .filter(Boolean) as string[]
+  if (variants.some(item => item.trim().toLowerCase() === target)) return true
+  const key = versionKey(installed)
+  return Boolean(key) && variants.some(item => versionKey(item) === key)
+}
+
+/**
+ * Ключ проекта для состояния установки. Идентичность — `(источник, id проекта)`:
+ * у Modrinth это project_id, у CurseForge modId. Slug — только запасной вариант
+ * для записей, где id нет: одинаковые slug на разных платформах давали «двойную
+ * установку», а slug вообще может сменить автор проекта.
+ */
+export function contentProjectKey(project: { source?: string | null; projectId?: string | null; modId?: number | null; slug?: string | null; id?: string | null }): string {
+  const id = project.projectId ?? (project.modId != null ? String(project.modId) : null) ?? project.slug ?? project.id ?? ""
+  return `${project.source ?? ""}:${id}`
+}
+
+export function pickCompatibleVersion(versions: ModVersion[] | undefined, build: Build, requireLoaderMatch = true): ModVersion | undefined {
   if (!versions?.length) return undefined
 
   const installableVersions = versions.filter(version => version.files?.[0]?.url || version.downloadUrl || version.fileName)
   return installableVersions.find(version => matchesBuildVersion(version, build, requireLoaderMatch))
-    ?? installableVersions.find(version => {
-      const gameVersions = parseVersionList(version.gameVersion ?? "")
-      return gameVersions.length === 0 || gameVersions.includes(build.version)
-    })
-    ?? installableVersions[0]
 }
+
+/**
+ * Проверяет, совместим ли найденный проект с текущей сборкой (версия Minecraft + загрузчик).
+ * Если у проекта есть метаданные версий или загрузчиков, несовместимые проекты отсекаются.
+ */
+export function isProjectCompatibleWithBuild(
+  project: ModSearchResult,
+  build: Build | null,
+  requireLoaderMatch = true,
+): boolean {
+  if (!build) return true
+
+  // 1. Фильтр по версии Minecraft
+  const targetMc = (build.version || "").trim().toLowerCase()
+  if (targetMc && project.gameVersions && project.gameVersions.length > 0) {
+    const hasMc = project.gameVersions.some((v: string) => {
+      const clean = String(v).trim().toLowerCase()
+      if (clean === targetMc) return true
+      const baseClean = clean.split("-")[0]
+      const baseTarget = targetMc.split("-")[0]
+      return baseClean === baseTarget
+    })
+    if (!hasMc) return false
+  }
+
+  // 2. Фильтр по загрузчику (только для модов)
+  const buildLoader = (build.modLoader || "").trim().toLowerCase()
+  if (requireLoaderMatch && buildLoader && buildLoader !== "vanilla" && project.loaders && project.loaders.length > 0) {
+    const hasLoader = project.loaders.some((l: string) => String(l).trim().toLowerCase() === buildLoader)
+    if (!hasLoader) return false
+  }
+
+  return true
+}
+

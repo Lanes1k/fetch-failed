@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom"
 import { cn } from "@/lib/utils"
 import { useTranslation } from "react-i18next"
+import { ModalLayer } from "@/components/ui/modal-layer"
 import { IconAlertTriangle, IconCircleX, IconPower } from "@tabler/icons-react"
 
 interface SettingsAuthlibProps {
@@ -120,13 +121,13 @@ export function SettingsAuthlib({
         
         {injectorType === "retroauth" && enabled && (
           <div className="mt-3 text-xs text-muted-foreground">
-fetch failed
+            {t("settings.authlib.retroauthDesc")}
           </div>
         )}
       </div>
 
       {showWarningModal && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in-0">
+        <ModalLayer onClose={() => setShowWarningModal(false)} className="bg-background/80 backdrop-blur-sm animate-in fade-in-0">
           <div className="w-full max-w-md p-6 rounded-2xl bg-card border border-destructive/50 shadow-2xl animate-in zoom-in-95 slide-in-from-bottom-4">
             <div className="flex items-center gap-4 mb-6">
               <div className="w-12 h-12 rounded-xl bg-destructive/20 flex items-center justify-center">
@@ -163,7 +164,7 @@ fetch failed
               </button>
             </div>
           </div>
-        </div>,
+        </ModalLayer>,
         document.body
       )}
     </>

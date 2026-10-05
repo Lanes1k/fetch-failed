@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
+import { ModalLayer } from "@/components/ui/modal-layer"
 import { SkinViewer3D } from "@/components/ui/skin-viewer-3d"
 import { batchRenderCapes } from "@/lib/batch-cape-renderer"
 import { localFileToBlobUrl } from "@/lib/local-file-url"
@@ -88,12 +89,13 @@ export function EditSkinModal({ open, onClose, skin, capes, activeCapeId, onSave
   }, [pendingFile, variant, selectedCapeId, onSave, onClose])
 
   const selectedCape = capes.find(c => c.id === selectedCapeId)
-  const displayCapeUrl = pendingFile ? undefined : selectedCape?.url
+  // Плащ показываем всегда: смена текстуры скина не должна его скрывать
+  const displayCapeUrl = selectedCape?.url
 
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <ModalLayer onClose={onClose} className="z-50">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative z-10 w-full max-w-3xl max-h-[85vh] mx-4 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
         <input
@@ -107,7 +109,7 @@ export function EditSkinModal({ open, onClose, skin, capes, activeCapeId, onSave
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="text-lg font-bold text-foreground">
-            {skin ? t("skins.editSkin", "fetch failed") : t("skins.addSkin", "fetch failed")}
+            {skin ? t("skins.editSkin") : t("skins.addSkin")}
           </h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
             <IconX className="w-5 h-5" />
@@ -144,7 +146,7 @@ export function EditSkinModal({ open, onClose, skin, capes, activeCapeId, onSave
           <div className="flex-1 flex flex-col gap-5 min-w-0">
             {/* Texture section — drop zone */}
             <section>
-              <h3 className="text-sm font-semibold text-foreground mb-2">{t("skins.texture", "fetch failed")}</h3>
+              <h3 className="text-sm font-semibold text-foreground mb-2">{t("skins.texture")}</h3>
               <div
                 className={cn(
                   "flex flex-col items-center gap-2 px-4 py-5 rounded-xl border-2 border-dashed transition-all duration-200 cursor-pointer",
@@ -161,15 +163,15 @@ export function EditSkinModal({ open, onClose, skin, capes, activeCapeId, onSave
                 <span className="text-sm text-muted-foreground">
                   {pendingFile
                     ? pendingFile.name
-                    : t("skins.replaceTexture", "fetch failed")}
+                    : t("skins.replaceTexture")}
                 </span>
-                <span className="text-xs text-primary font-medium">{t("skins.dragDropHint", "fetch failed")}</span>
+                <span className="text-xs text-primary font-medium">{t("skins.dragDropHint")}</span>
               </div>
             </section>
 
             {/* Arm style */}
             <section>
-              <h3 className="text-sm font-semibold text-foreground mb-2">{t("skins.armStyle", "fetch failed")}</h3>
+              <h3 className="text-sm font-semibold text-foreground mb-2">{t("skins.armStyle")}</h3>
               <div className="flex gap-2">
                 {(["classic", "slim"] as const).map(v => (
                   <button
@@ -182,7 +184,7 @@ export function EditSkinModal({ open, onClose, skin, capes, activeCapeId, onSave
                         : "border-border bg-muted/30 text-muted-foreground hover:text-foreground"
                     )}
                   >
-                    {v === "classic" ? t("skins.wide", "fetch failed") : t("skins.slim", "fetch failed")}
+                    {v === "classic" ? t("skins.wide") : t("skins.slim")}
                   </button>
                 ))}
               </div>
@@ -190,7 +192,7 @@ export function EditSkinModal({ open, onClose, skin, capes, activeCapeId, onSave
 
             {/* Cape section */}
             <section>
-              <h3 className="text-sm font-semibold text-foreground mb-2">{t("skins.capes", "fetch failed")}</h3>
+              <h3 className="text-sm font-semibold text-foreground mb-2">{t("skins.capes")}</h3>
               <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto">
                 <button
                   onClick={() => setSelectedCapeId(null)}
@@ -201,10 +203,10 @@ export function EditSkinModal({ open, onClose, skin, capes, activeCapeId, onSave
                       : "border-border/60 hover:border-border"
                   )}
                   style={{ width: 76, height: 116 }}
-                  title={t("skins.none", "fetch failed")}
+                  title={t("skins.none")}
                 >
                   <IconX className="w-5 h-5 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground mt-1">{t("skins.none", "fetch failed")}</span>
+                  <span className="text-[10px] text-muted-foreground mt-1">{t("skins.none")}</span>
                 </button>
                 {capes.map(cape => {
                   const previewDataUrl = capePreviews.get(cape.id)
@@ -251,7 +253,7 @@ export function EditSkinModal({ open, onClose, skin, capes, activeCapeId, onSave
             onClick={onClose}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border bg-muted/50 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
-            {t("common.cancel", "fetch failed")}
+            {t("common.cancel")}
           </button>
           <button
             onClick={handleSave}
@@ -259,10 +261,10 @@ export function EditSkinModal({ open, onClose, skin, capes, activeCapeId, onSave
             className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             {saving ? <IconLoader2 className="w-4 h-4 animate-spin" /> : <IconCheck className="w-4 h-4" />}
-            {t("skins.save", "fetch failed")}
+            {t("skins.save")}
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   )
 }

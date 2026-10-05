@@ -375,7 +375,7 @@ export function countLaunchArgument(args: string[], name: string): number {
 }
 
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
+  if (bytes === 0) return "fetch failed";
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -423,4 +423,13 @@ export function mavenCoordinateToPath(
   }
   fileName += `.${extension}`;
   return `${groupPath}/${artifactId}/${version}/${fileName}`;
+}
+
+/**
+ * Normalizes a Java executable path by replacing `javaw.exe` with `java.exe`.
+ * Returns undefined if the input is empty.
+ */
+export function normalizeJavaPath(javaPath?: string): string | undefined {
+  if (!javaPath) return javaPath
+  return javaPath.replace(/(^|[\\/])javaw\.exe$/i, "$1java.exe")
 }

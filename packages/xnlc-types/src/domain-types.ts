@@ -3,9 +3,26 @@
 // Single source of truth for database entities, auth, news, etc.
 // ============================================================
 
+import type { ModVersion } from "./mod-types.js"
+
 // ── Database Types ──────────────────────────────────────────
 
 export type BuildExportCategory = "mods" | "resourcepacks" | "shaderpacks" | "saves" | "data" | "logs"
+
+/**
+ * Категории содержимого, которое можно выборочно загрузить в облако.
+ * Объединяет категории сборки (BuildExportCategory) и серверные категории.
+ */
+export type CloudUploadCategory =
+  | "mods"
+  | "resourcepacks"
+  | "shaderpacks"
+  | "saves"
+  | "data"
+  | "logs"
+  | "world"
+  | "plugins"
+  | "configs"
 
 export type DbAccount = {
   id: string
@@ -51,6 +68,12 @@ export type DbBuild = {
   source: "local" | "modrinth" | "curseforge"
   projectSlug?: string
   modpackVersion?: string
+  /** Id конкретной версии модпака на площадке (только у связанных модпаков). */
+  modpackVersionId?: string
+  modId?: number
+  fileId?: number
+  /** Whether the build is linked/locked to an official modpack */
+  locked?: boolean
   intentPath?: string
   installedMods?: Record<string, string>
   playtime: number
@@ -74,8 +97,25 @@ export type DbBuild = {
   customEnv?: string
   /** Default account used when launching this build */
   defaultAccountId?: string
-  /** Group/category label for organizing builds (e.g. "fetch failed") */
+  /** Group/category label for organizing builds (e.g. "Моды для сервера") */
   group?: string
+  /** Переопределение размера окна для этой сборки. */
+  windowOverride?: boolean
+  windowWidth?: number
+  windowHeight?: number
+}
+
+/**
+ * Сборка без тяжёлого контента: списку нужны только счётчики.
+ *
+ * `mods`/`resourcepacks`/`shaders`/`installedMods` у модпаков занимают десятки
+ * мегабайт, поэтому `db:load-builds-light` отдаёт эту форму, а сами списки
+ * приезжают отдельно через `db:load-build-content` при открытии сборки.
+ */
+export type DbBuildLight = Omit<DbBuild, "mods" | "resourcepacks" | "shaders" | "installedMods"> & {
+  modsCount: number
+  resourcepacksCount: number
+  shadersCount: number
 }
 
 // ── World / Save Management ─────────────────────────────────
@@ -136,6 +176,21 @@ export type AuthSession = {
   profileId: string
   profileName?: string
 }
+
+export type DeviceCodeStart = {
+  deviceCode: string
+  userCode: string
+  verificationUri: string
+  verificationUriComplete: string
+  expiresIn: number
+  interval: number
+}
+
+export type DeviceCodePoll =
+  | { status: "pending"; slowDown?: boolean }
+  | { status: "expired" }
+  | { status: "complete"; account: AuthPayload }
+  | { status: "error"; message: string; retryable?: boolean }
 
 // ── Minecraft Types ─────────────────────────────────────────
 
@@ -250,6 +305,18 @@ export type ModpackImportMod = {
   version: string
 }
 
+/** Уже установленный модпак, который мешает новой установке */
+export type ModpackImportConflict = {
+  /** duplicate — этот же модпак уже установлен, name — имя сборки уже занято другим модпаком */
+  kind: "duplicate" | "name"
+  /** Имя существующей сборки */
+  existingName: string
+  /** Id существующей сборки */
+  existingBuildId: string
+  /** Свободное имя, предлагаемое для новой сборки */
+  suggestedName: string
+}
+
 export type ModpackImportResult = {
   success: boolean
   error?: string
@@ -258,10 +325,14 @@ export type ModpackImportResult = {
   modLoader?: string
   loaderVersion?: string
   modpackVersion?: string
+  /** Id установленной версии модпака — нужен, чтобы «Восстановить» ставил именно её */
+  modpackVersionId?: string
   mods?: ModpackImportMod[]
   resourcepacks?: ModpackImportMod[]
   shaders?: ModpackImportMod[]
   installedMods?: Record<string, string>
+  /** Заполняется, когда импорт заблокирован, потому что такая сборка уже есть */
+  conflict?: ModpackImportConflict
 }
 
 // ── Import Progress ─────────────────────────────────────────
@@ -277,63 +348,11 @@ export type ContentDownloadProgress = {
   fileName: string
   current: number
   total: number
-}
-
-// ── P2P Multiplayer Types ───────────────────────────────────
-
-export type P2PRoom = {
-  id: string
-  name: string
-  isHost: boolean
-  createdAt: number
-}
-
-export type P2PRoomMember = {
-  id: string
-  login: string
-  isHost: boolean
-  clientUuid?: string
-  joinedAt: number
-}
-
-export type P2PLogLevel = "debug" | "info" | "warn" | "error"
-
-export type P2PLogEntry = {
-  ts: string
-  level: P2PLogLevel
-  prefix: string
-  message: string
-}
-
-export type P2PConnState = "disconnected" | "connecting" | "connected" | "failed"
-
-export type P2PLanServer = {
-  motd: string
-  port: number
-  localPort: number
-}
-
-export type P2PRole = "host" | "joiner"
-
-export type P2PAuthResult = {
-  success: boolean
-  token?: string
-  userId?: string
-  login?: string
-  error?: string
-}
-
-export type P2PRoomOpResult = {
-  success: boolean
-  groupId?: string
-  name?: string
-  error?: string
-}
-
-export type P2PChatMessage = {
-  sender: string
-  message: string
-  ts: number
+  /**
+   * `true` — поток по файлу закрыт (успешно или с ошибкой). Без этого признака
+   * живое уведомление об установке остаётся висеть на последнем проценте.
+   */
+  done?: boolean
 }
 
 // ── Skins ─────────────────────────────────────────────────
@@ -350,6 +369,11 @@ export type LibrarySkin = {
   variant: "classic" | "slim"
   capeId: string | null
   createdAt: string
+  /**
+   * Идентификатор скина в каталоге. У новых записей — с префиксом источника
+   * (`laby:<image_hash>`), у сохранённых ранее из Craftdex — голый UUID.
+   */
+  sourceId?: string | null
 }
 
 // ── Quick Play ─────────────────────────────────────────────
@@ -359,4 +383,153 @@ export type QuickPlayEntry = {
   label: string
   address: string
   lastPlayed: number
+}
+
+// ── Content Updates ─────────────────────────────────────────
+
+/** Minimum stability channel included when checking for content updates */
+export type UpdateChannel = "release" | "beta" | "alpha"
+
+export type ContentUpdateInfo = {
+  /** BuildMod.id of the installed item */
+  itemId: string
+  contentType: "mods" | "resourcepacks" | "shaders"
+  source: "modrinth" | "curseforge"
+  /** CurseForge numeric project id (needed to resolve download URLs) */
+  modId?: number
+  name: string
+  iconUrl?: string
+  currentVersion: string
+  latestVersion: ModVersion
+}
+
+export type BuildContentUpdates = {
+  buildId: string
+  channel: UpdateChannel
+  checkedAt: number
+  updates: ContentUpdateInfo[]
+}
+
+// ── Game Statistics ─────────────────────────────────────────
+
+export type GameSessionInfo = {
+  id: string
+  buildId: string
+  buildName: string
+  startedAt: number
+  endedAt: number
+  /** Session length in seconds */
+  duration: number
+}
+
+export type ServerSessionInfo = {
+  id: string
+  serverId: string
+  serverName: string
+  startedAt: number
+  endedAt: number
+  /** Session length in seconds */
+  duration: number
+}
+
+/** Inclusive time range (epoch ms) for statistics aggregation. */
+export type StatsRange = {
+  from: number
+  to: number
+}
+
+export type StatsOverview = {
+  totalPlaytime: number
+  totalSessions: number
+  averageSession: number
+  lastSession: GameSessionInfo | null
+  /** Range actually aggregated (epoch ms). */
+  rangeFrom?: number
+  rangeTo?: number
+  /** Per-day playtime inside the selected range, date = YYYY-MM-DD (local) */
+  dailyPlaytime: Array<{ date: string; seconds: number }>
+  topBuilds: Array<{ buildId: string; name: string; icon?: string; seconds: number; sessions: number }>
+  /** Per-server uptime for the launcher's own MC servers */
+  serverTotalUptime: number
+  serverTotalSessions?: number
+  serverAverageSession?: number
+  serverLastSession?: ServerSessionInfo | null
+  dailyServerUptime?: Array<{ date: string; seconds: number }>
+  topServers: Array<{ serverId: string; name: string; icon?: string; seconds: number; sessions: number }>
+  /** Игра запущена прямо сейчас — timestamp старта (иначе null). По нему страница статистики включает локальный тик вместо поллинга. */
+  gameActiveStartedAt?: number | null
+  /** Сколько собственных серверов работает прямо сейчас. */
+  activeServerSessions?: number
+}
+
+// ── Storage / Disk Manager ──────────────────────────────────
+
+export type BuildStorageEntry = {
+  buildId: string
+  name: string
+  path: string
+  icon: string
+  version: string
+  modLoader: string
+  total: number
+  mods: number
+  resourcepacks: number
+  shaderpacks: number
+  saves: number
+  config: number
+  logs: number
+  crashReports: number
+  /** .cache, .fabric, .quilt folders */
+  cache: number
+  other: number
+}
+
+export type ServerStorageEntry = {
+  serverId: string
+  name: string
+  path: string
+  icon: string
+  gameVersion: string
+  modLoader: string
+  total: number
+  mods: number
+  config: number
+  logs: number
+  world: number
+  /** server wrapper / plugins / dynmap etc. */
+  plugins: number
+  cache: number
+  other: number
+}
+
+export type JavaRuntimeEntry = {
+  path: string
+  component: string
+  size: number
+  /** Human-readable Java version label, e.g. "Java 21" */
+  label: string
+  /** Exact version string when known, e.g. "21.0.7" */
+  versionLabel: string
+}
+
+export type StorageScanResult = {
+  builds: BuildStorageEntry[]
+  servers: ServerStorageEntry[]
+  trash: { path: string; size: number }
+  javaRuntimes: { path: string; size: number; entries: JavaRuntimeEntry[] }
+  gameDir: { path: string; size: number }
+  scannedAt: number
+}
+
+export type StorageCleanTarget =
+  | { kind: "build-logs"; buildId: string }
+  | { kind: "build-crash-reports"; buildId: string }
+  | { kind: "build-cache"; buildId: string }
+  | { kind: "trash" }
+  | { kind: "java-runtime"; path: string }
+
+export type StorageCleanResult = {
+  success: boolean
+  freedBytes: number
+  error?: string
 }

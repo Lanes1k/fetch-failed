@@ -55,7 +55,7 @@ export class ForgeHandler implements ILoaderHandler {
 
     const metaForge = await this.loaderMetaClient.getVersion("net.minecraftforge", forgeVersion);
     if (!metaForge) {
-      throw new Error(`Forge ${forgeVersion} not found in loader meta`);
+      throw new Error(`Forge ${forgeVersion}fetch failed`);
     }
 
     const baseMcJson = await this.metaClient.fetchVersionJson(mcVersion);

@@ -55,7 +55,7 @@ export class LiteLoaderHandler implements ILoaderHandler {
     console.log(`[LiteLoaderHandler] Installing LiteLoader ${liteloaderVersion} for Minecraft ${mcVersion}`);
 
     const metaLite = await this.loaderMetaClient.getVersion("com.mumfrey.liteloader", liteloaderVersion);
-    if (!metaLite) throw new Error(`LiteLoader ${liteloaderVersion} not found in loader meta`);
+    if (!metaLite) throw new Error(`LiteLoader ${liteloaderVersion}fetch failed`);
 
     const baseMcJson = await this.metaClient.fetchVersionJson(mcVersion);
     

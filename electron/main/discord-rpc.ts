@@ -1,14 +1,20 @@
 import fs from "fs/promises"
 import path from "path"
+import { app } from "electron"
 
 const CLIENT_ID = "1279183673660538972"
+const RETRY_DELAY_MS = 15_000
 let rpc: any = null
 let connected = false
-let pendingActivity: { state?: string; largeImageKey?: string; largeImageText?: string; smallImageKey?: string; smallImageText?: string; loader?: string; startTimestamp?: number } | null = null
+let connecting = false
+let retryTimer: NodeJS.Timeout | null = null
+let shuttingDown = false
+let pendingActivity: DiscordActivity | null = null
+let lastActivity: DiscordActivity | null = null
 let gameStartTimestamp: number | undefined = undefined
 
-export function getGameStartTimestamp(): number | undefined {
-  return gameStartTimestamp
+export function resetGameStartTimestamp(): void {
+  gameStartTimestamp = undefined
 }
 
 async function getRuntimeDirCandidates(): Promise<string[]> {
@@ -63,6 +69,8 @@ async function loginWithRuntimeDir(runtimeDir?: string): Promise<any> {
 
   client.on("disconnected", () => {
     connected = false
+    rpc = null
+    scheduleRetry()
   })
 
   client.on("error", (err: { code: number }) => {
@@ -70,10 +78,13 @@ async function loginWithRuntimeDir(runtimeDir?: string): Promise<any> {
       console.error("Discord RPC error:", err)
     }
     connected = false
+    rpc = null
+    scheduleRetry()
   })
 
   client.on("ready", () => {
     connected = true
+    flushPendingActivity()
   })
 
   try {
@@ -81,7 +92,16 @@ async function loginWithRuntimeDir(runtimeDir?: string): Promise<any> {
       process.env.XDG_RUNTIME_DIR = runtimeDir
     }
     await client.login({ clientId: CLIENT_ID })
+    // discord-rpc resolves login() once the READY frame arrived, so a pending
+    // activity must be flushed here even if the "ready" event raced us.
+    connected = true
     return client
+  } catch (error) {
+    // login() мог успеть поднять IPC-соединение и навесить слушателей: без
+    // destroy() каждая неудачная попытка утекала, а retry раз в 15 секунд
+    // создавал новый клиент.
+    try { await client.destroy() } catch { /* клиент мог не успеть создать соединение */ }
+    throw error
   } finally {
     if (previousRuntimeDir === undefined) {
       delete process.env.XDG_RUNTIME_DIR
@@ -91,32 +111,69 @@ async function loginWithRuntimeDir(runtimeDir?: string): Promise<any> {
   }
 }
 
-export async function initDiscordRpc(): Promise<void> {
-  if (connected) return
-
-  if (process.platform === "win32") {
-    try {
-      rpc = await loginWithRuntimeDir()
-      return
-    } catch { }
-    return
-  }
-
-  const runtimeDirs = await getRuntimeDirCandidates()
-  const preferredRuntimeDirs: string[] = []
-  for (const dir of runtimeDirs) {
-    if (await hasDiscordIpcSocket(dir)) {
-      preferredRuntimeDirs.push(dir)
+function scheduleRetry(): void {
+  if (retryTimer || shuttingDown) return
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    if (!connected) {
+      void initDiscordRpc()
     }
-  }
-  const candidates = preferredRuntimeDirs.length > 0 ? preferredRuntimeDirs : runtimeDirs
+  }, RETRY_DELAY_MS)
+  // Never keep the Electron process alive just for the retry timer.
+  retryTimer.unref?.()
+}
 
-  for (const runtimeDir of candidates) {
-    try {
-      rpc = await loginWithRuntimeDir(runtimeDir)
+function flushPendingActivity(): void {
+  if (!connected || !rpc) return
+  const activity = pendingActivity ?? lastActivity
+  if (!activity) return
+  pendingActivity = null
+  applyActivity(activity)
+}
+
+export async function initDiscordRpc(): Promise<void> {
+  if (connected || connecting || shuttingDown) return
+  connecting = true
+
+  try {
+    if (process.platform === "win32") {
+      try {
+        rpc = await loginWithRuntimeDir()
+      } catch {
+        rpc = null
+      }
       return
-    } catch {
-      rpc = null
+    }
+
+    const runtimeDirs = await getRuntimeDirCandidates()
+    const preferredRuntimeDirs: string[] = []
+    for (const dir of runtimeDirs) {
+      if (await hasDiscordIpcSocket(dir)) {
+        preferredRuntimeDirs.push(dir)
+      }
+    }
+    const candidates = preferredRuntimeDirs.length > 0 ? preferredRuntimeDirs : runtimeDirs
+
+    for (const runtimeDir of candidates) {
+      try {
+        rpc = await loginWithRuntimeDir(runtimeDir)
+        return
+      } catch {
+        rpc = null
+      }
+    }
+  } finally {
+    connecting = false
+    if (connected) {
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
+      flushPendingActivity()
+    } else {
+      // Discord may simply not be running yet — keep retrying in the background
+      // so the presence shows up without requiring a game launch first.
+      scheduleRetry()
     }
   }
 }
@@ -152,10 +209,11 @@ type DiscordActivity = {
 }
 
 function applyActivity(activity: DiscordActivity): void {
+  lastActivity = activity
   const {
     state = "fetch failed",
     largeImageKey = "logo",
-    largeImageText = "Xneon Launcher",
+    largeImageText = "fetch failed",
     smallImageKey,
     smallImageText,
     loader,
@@ -212,27 +270,37 @@ if (smallImageKey) {
   rpc?.setActivity(activityData).catch((err: unknown) => {
     console.error("[DiscordRPC] Failed to set activity:", err)
     connected = false
+    rpc = null
+    scheduleRetry()
   })
 }
 
-export function clearDiscordActivity(): void {
-  if (!connected || !rpc) return
-  rpc.clearActivity().catch(console.error)
-}
-
-export function reconnectDiscordRpc(): void {
-  connected = false
-  if (rpc) {
-    rpc.destroy().catch(() => {})
-    rpc = null
-  }
-  initDiscordRpc()
-}
-
-export function isDiscordRpcConnected(): boolean {
-  return connected
-}
-
+// Launcher just started — publish the "in menu" presence right away instead of
+// waiting for the first game launch to set any activity.
 setTimeout(() => {
-  initDiscordRpc()
-}, 2000)
+  setDiscordActivity({ state: "fetch failed" })
+}, 1500)
+
+/**
+ * Корректно останавливает RPC при выходе приложения: уничтожает клиент (вместе
+ * с IPC-соединением и слушателями) и снимает retry-таймер, чтобы после
+ * `before-quit` не оставалось живых подписок и повторных попыток подключения.
+ */
+export function shutdownDiscordRpc(): void {
+  shuttingDown = true
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  const client = rpc
+  rpc = null
+  connected = false
+  pendingActivity = null
+  if (client) {
+    try { void client.destroy() } catch { /* клиент мог быть уже уничтожен */ }
+  }
+}
+
+app.on("before-quit", () => {
+  shutdownDiscordRpc()
+})

@@ -11,10 +11,16 @@ function formatRelativeTime(timestamp: number): string {
   const diffMs = Date.now() - timestamp
   const diffMinutes = Math.max(0, Math.floor(diffMs / 60000))
   if (diffMinutes < 1) return "fetch failed"
-  if (diffMinutes < 60) return `fetch failed`
+  if (diffMinutes < 60) return `${diffMinutes}fetch failed`
   const diffHours = Math.floor(diffMinutes / 60)
-  if (diffHours < 24) return `fetch failed`
-  return `fetch failed`
+  if (diffHours < 24) return `${diffHours}fetch failed`
+  return `${Math.floor(diffHours / 24)}fetch failed`
+}
+
+function formatSourceLabel(source: ActivityNotification["source"]): string {
+  if (source === "launch") return "fetch failed"
+  if (source === "install") return "fetch failed"
+  return "fetch failed"
 }
 
 function NotificationIcon({ notification }: { notification: ActivityNotification }) {
@@ -88,7 +94,7 @@ export function TitleBar() {
                   </div>
                   {unreadCount > 0 && (
                     <span className="rounded-full bg-primary/12 px-2.5 py-1 text-xs font-medium text-primary">
-                      {unreadCount}fetch failed
+                      {unreadCount} fetch failed
                     </span>
                   )}
                 </div>
@@ -137,7 +143,7 @@ export function TitleBar() {
                               <p className="mt-2 truncate text-[11px] text-muted-foreground/90">{notification.itemName}</p>
                             )}
 
-                            {typeof notification.progress === "number" && (
+                            {typeof notification.progress === "number" ? (
                               <div className="mt-3">
                                 <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                                   <div
@@ -146,11 +152,20 @@ export function TitleBar() {
                                   />
                                 </div>
                                 <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                                  <span>{notification.source === "launch" ? "fetch failed" : "fetch failed"}</span>
+                                  <span>{formatSourceLabel(notification.source)}</span>
                                   <span>{notification.progress}%</span>
                                 </div>
                               </div>
-                            )}
+                            ) : notification.busy ? (
+                              // Этапы без байтов (поиск версии, окно зависимостей): процентов
+                              // ещё нет, но полоса должна показывать, что процесс идёт.
+                              <div className="mt-3">
+                                <div className="progress-indeterminate h-1.5 rounded-full bg-muted" />
+                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                  {formatSourceLabel(notification.source)}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       </div>

@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useAccounts } from "@/src/AccountsContext"
 import { getAvatarUrl } from "@/lib/home-page-shared"
 import { useHomeLaunch } from "@/src/hooks/use-home-launch"
 import { useHomeVersions } from "@/src/hooks/use-home-versions"
 import { useLoaderVersionOptions } from "@/src/hooks/use-loader-version-options"
-import { loadLaunchSettings, resolveLaunchDimensions } from "@/src/hooks/use-build-launch"
 import { HomeControls } from "./controls"
 import { NewsSection } from "./news"
 
@@ -31,6 +30,21 @@ function saveHomeSelectionPrefs(version: string, modLoader: string, loaderVersio
   }
 }
 
+/**
+ * Одноразовая заявка на авто-запуск сборки: её кладёт кнопка Play на карточке
+ * сборки. Читаем и сразу снимаем — повторный запуск при следующем заходе на
+ * главную не нужен.
+ */
+function consumeAutoLaunchBuild(): string | null {
+  try {
+    const value = localStorage.getItem("xneon-launcher:autoLaunchBuild")
+    if (value) localStorage.removeItem("xneon-launcher:autoLaunchBuild")
+    return value
+  } catch {
+    return null
+  }
+}
+
 export function HomePage() {
   const saved = getSavedLaunchPrefs()
   const { accounts, activeAccount, setActiveAccount } = useAccounts()
@@ -38,72 +52,35 @@ export function HomePage() {
   const [selectedLoaderVersion, setSelectedLoaderVersion] = useState(saved.loaderVersion ?? "")
   const [accountComboOpen, setAccountComboOpen] = useState(false)
   const { versions, versionsLoaded, selectedVersion, setSelectedVersion, buildIcons } = useHomeVersions(selectedModLoader, saved.version)
-  const { loaderVersions, loaderVersionsLoaded, recommendedLoaderVersion } = useLoaderVersionOptions(selectedModLoader, selectedVersion)
+  const { loaderVersions, loaderVersionsLoaded, defaultLoaderVersion } = useLoaderVersionOptions(selectedModLoader, selectedVersion)
   const account = activeAccount ?? accounts[0]
   const activeAvatarUrl = useMemo(() => account ? getAvatarUrl(account, account.username) : "", [account])
   const accountAvatarUrls = useMemo(() => Object.fromEntries(accounts.map(a => [a.id, getAvatarUrl(a, a.username)])), [accounts])
-  const { isRunning, launchUi, launchDetails, handlePlay } = useHomeLaunch({ account, selectedVersion, selectedModLoader, selectedLoaderVersion })
+  const { isRunning, launchUi, launchDetails, handlePlay, handleQuickPlay } = useHomeLaunch({ account, selectedVersion, selectedModLoader, selectedLoaderVersion })
 
-  const handleQuickPlayLaunch = useCallback(async (type: "singleplayer" | "multiplayer", address: string) => {
-    if (!account || !window.electronAPI || isRunning) return
+  // Play на карточке сборки привёл сюда с заявкой на запуск: ждём, пока выбор
+  // сборки реально применится (список сборок грузится асинхронно), и стартуем
+  // один раз. Если игра уже запущена — заявку просто гасим, без сюрпризов.
+  const [autoLaunchBuild] = useState(() => consumeAutoLaunchBuild())
+  const autoLaunchHandledRef = useRef(false)
 
-    const settings = await loadLaunchSettings()
-    const { width, height } = resolveLaunchDimensions(settings)
+  useEffect(() => {
+    if (!autoLaunchBuild || autoLaunchHandledRef.current) return
+    if (selectedModLoader !== "instance") return
+    if (!versionsLoaded || selectedVersion !== autoLaunchBuild) return
 
-    const quickPlayParams = type === "singleplayer"
-      ? { quickPlaySingleplayer: address }
-      : { quickPlayMultiplayer: address }
-
-    const isInstance = selectedModLoader === "instance"
-    const buildName = isInstance ? selectedVersion : undefined
-    let mcVersion = selectedVersion
-    let modLoader = selectedModLoader
-    let loaderVersion: string | undefined
-    let build: {
-      name: string; version: string; modLoader: string; loaderVersion?: string
-      preLaunchCommand?: string; postLaunchCommand?: string; wrapperCommand?: string; customEnv?: string
-    } | undefined
-
-    if (isInstance && buildName) {
-      const builds = await window.electronAPI.loadBuilds() ?? []
-      build = builds.find(b => b.name === buildName)
-      if (!build) return
-      mcVersion = build.version
-      modLoader = build.modLoader
-      loaderVersion = build.loaderVersion
-    }
-
-    const intentPath = buildName ? await window.electronAPI.getBuildIntentPath(buildName) : undefined
-
-    const envRecord: Record<string, string> = {}
-    for (const line of (build?.customEnv ?? "").split(/\r?\n/)) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith("#")) continue
-      const eq = trimmed.indexOf("=")
-      if (eq > 0) envRecord[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim()
-    }
-
-    const result = await window.electronAPI.launchMinecraft({
-      version: mcVersion,
-      modLoader: modLoader as "vanilla" | "forge" | "fabric" | "quilt" | "liteloader" | "optifine" | "neoforge",
-      ...(loaderVersion ? { loaderVersion } : {}),
-      account: { type: account.type, username: account.username, uuid: account.uuid, accessToken: account.accessToken },
-      memory: { min: settings.savedMemoryMin || "512M", max: settings.savedMemoryMax || "4G" },
-      width,
-      height,
-      buildName,
-      gameDir: intentPath,
-      ...quickPlayParams,
-      ...(build?.preLaunchCommand ? { preLaunchCommand: build.preLaunchCommand } : {}),
-      ...(build?.postLaunchCommand ? { postLaunchCommand: build.postLaunchCommand } : {}),
-      ...(build?.wrapperCommand ? { wrapperCommand: build.wrapperCommand } : {}),
-      ...(Object.keys(envRecord).length > 0 ? { customEnv: envRecord } : {}),
-    })
-
-    if (result.success) {
-      // Refresh is handled by the running state
-    }
-  }, [account, isRunning, selectedModLoader, selectedVersion])
+    autoLaunchHandledRef.current = true
+    if (isRunning || launchUi.isLaunching) return
+    void handlePlay()
+  }, [
+    autoLaunchBuild,
+    handlePlay,
+    isRunning,
+    launchUi.isLaunching,
+    selectedModLoader,
+    selectedVersion,
+    versionsLoaded,
+  ])
 
   useEffect(() => {
     if (selectedModLoader === "vanilla" || selectedModLoader === "instance") {
@@ -112,9 +89,9 @@ export function HomePage() {
     }
 
     if (!loaderVersionsLoaded) return
-    if (loaderVersions.some(option => option.value === selectedLoaderVersion)) return
-    setSelectedLoaderVersion(recommendedLoaderVersion ?? "")
-  }, [loaderVersions, loaderVersionsLoaded, recommendedLoaderVersion, selectedLoaderVersion, selectedModLoader])
+    if (selectedLoaderVersion && loaderVersions.some(option => option.value === selectedLoaderVersion)) return
+    setSelectedLoaderVersion(defaultLoaderVersion ?? "")
+  }, [loaderVersions, loaderVersionsLoaded, defaultLoaderVersion, selectedLoaderVersion, selectedModLoader])
 
   useEffect(() => {
     saveHomeSelectionPrefs(selectedVersion, selectedModLoader, selectedLoaderVersion)
@@ -145,7 +122,7 @@ export function HomePage() {
         launchDetails={launchDetails}
         isRunning={isRunning}
         onPlay={handlePlay}
-        onQuickPlayLaunch={handleQuickPlayLaunch}
+        onQuickPlayLaunch={handleQuickPlay}
       />
       <div className="flex-1 overflow-hidden"><NewsSection /></div>
     </div>

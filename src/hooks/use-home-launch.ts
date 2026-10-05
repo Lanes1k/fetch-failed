@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import type { Account } from "@/src/AccountsContext"
 import { useLaunchControls } from "@/src/LaunchLogsContext"
-import { useBuildLaunch, saveLastLaunchedPrefs, formatLoaderLabel, normalizeJavaPath, loadLaunchSettings, resolveLaunchDimensions } from "@/src/hooks/use-build-launch"
+import { useBuildLaunch, saveLastLaunchedPrefs, formatLoaderLabel, normalizeJavaPath, loadLaunchSettings, resolveLaunchDimensions, toQuickPlayParams, type BuildLaunchParams, type QuickPlayLaunchRequest } from "@/src/hooks/use-build-launch"
 
 type UseHomeLaunchParams = {
   account?: Account
@@ -13,10 +13,10 @@ type UseHomeLaunchParams = {
 
 export function useHomeLaunch({ account, selectedVersion, selectedModLoader, selectedLoaderVersion }: UseHomeLaunchParams) {
   const { t } = useTranslation()
-  const { isRunning, setIsRunning, clearLogs, addLog, launchUi, patchLaunchUi } = useLaunchControls()
+  const { isRunning, setIsRunning, clearLogs, addLog, launchUi, patchLaunchUi, gameReady } = useLaunchControls()
   const { launchInstance } = useBuildLaunch({ account })
 
-  const launchVanilla = useCallback(async () => {
+  const launchVanilla = useCallback(async (quickPlay?: QuickPlayLaunchRequest) => {
     if (!account || !window.electronAPI) return
 
     const usesSkinInjector = account.type === "xnskins" || account.type === "elyby"
@@ -25,6 +25,10 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
     const { width, height } = resolveLaunchDimensions(settings)
     const server = settings.savedAutoJoinServer === "true" ? (settings.savedServer ?? "") : ""
     const serverPort = settings.savedServerPort ?? ""
+    // Быстрая игра из карточки важнее авто-подключения из настроек.
+    const quickPlayParams = quickPlay
+      ? toQuickPlayParams(quickPlay)
+      : (server.trim() ? { quickPlayMultiplayer: `${server.trim()}:${serverPort.trim() || "25565"}` } : {})
 
     patchLaunchUi({
       isLaunching: true,
@@ -38,7 +42,7 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
       currentFileName: null,
     })
     clearLogs()
-    addLog(`fetch failed`)
+    addLog(`fetch failed${selectedVersion} · ${formatLoaderLabel(selectedModLoader, selectedLoaderVersion)} · ${account.username}`)
 
     const result = await window.electronAPI.launchMinecraft({
       version: selectedVersion,
@@ -52,57 +56,105 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
       retroauthInjectorEnabled: usesSkinInjector,
       ...(normalizedJavaPath ? { javaPath: normalizedJavaPath } : {}),
       ...(settings.savedJavaArgs ? { javaArgs: settings.savedJavaArgs } : {}),
-      ...(server.trim() ? { quickPlayMultiplayer: `${server.trim()}:${serverPort.trim() || "25565"}` } : {}),
+      ...quickPlayParams,
     })
 
     patchLaunchUi(result.success
-      ? { isLaunching: false, phase: "idle", progress: 100, status: t("launcherStatus.running") }
+      ? { isLaunching: false, phase: "idle", progress: 100, status: t("launcherStatus.starting") }
       : { isLaunching: false, status: result.error ?? "fetch failed" })
-    if (!result.success) addLog(`fetch failed`, "error")
+    if (!result.success) addLog(`fetch failed${result.error ?? "fetch failed"}`, "error")
     if (result.success) {
       setIsRunning(true)
       saveLastLaunchedPrefs(selectedVersion, selectedModLoader, selectedLoaderVersion)
+      const afterLaunch = await window.electronAPI?.getSetting("afterLaunch")
+      if (afterLaunch === "minimize") window.electronAPI?.minimize()
+      else if (afterLaunch === "close") window.electronAPI?.close()
     }
   }, [account, addLog, clearLogs, patchLaunchUi, selectedLoaderVersion, selectedModLoader, selectedVersion, setIsRunning, t])
 
-  const handlePlay = useCallback(async () => {
-    if (isRunning) {
-      return await window.electronAPI?.stopMinecraft()
-    }
-    if (!account || !window.electronAPI) return
+  /**
+   * Проверяет, что именно запускаем: сборку или ванильную версию.
+   * Возвращает null, если выбор некорректен (ошибка уже показана в UI).
+   */
+  const resolveLaunchTarget = useCallback(async (): Promise<{ build?: BuildLaunchParams } | null> => {
+    if (!window.electronAPI) return null
 
     if (selectedModLoader === "instance") {
       if (!selectedVersion) {
         patchLaunchUi({ isLaunching: false, phase: "idle", progress: null, status: "fetch failed" })
         addLog("fetch failed", "error")
-        return
+        return null
       }
 
-      const builds = await window.electronAPI.loadBuilds() ?? []
+      // Лёгкий список: для запуска нужны версия/загрузчик/путь, а не контент сборки.
+      const builds = (await window.electronAPI?.loadBuildsLight()) ?? []
       const build = builds.find((item) => item.name === selectedVersion)
       if (!build) {
         patchLaunchUi({ isLaunching: false, phase: "idle", progress: null, status: "fetch failed" })
-        addLog(`fetch failed`, "error")
-        return
+        addLog(`fetch failed${selectedVersion}fetch failed`, "error")
+        return null
       }
 
-      await launchInstance(build)
-      return
+      return { build }
     }
 
     if (!selectedVersion) {
       patchLaunchUi({ isLaunching: false, phase: "idle", progress: null, status: "fetch failed" })
       addLog("fetch failed", "error")
+      return null
+    }
+
+    return {}
+  }, [addLog, patchLaunchUi, selectedModLoader, selectedVersion])
+
+  const handlePlay = useCallback(async () => {
+    if (isRunning) {
+      // Процесс стартует раньше, чем открывается окно игры: пока игра не
+      // подтвердила готовность, кнопка — «Запускается...», и клик ничего не гасит.
+      if (!gameReady) return
+      return await window.electronAPI?.stopMinecraft()
+    }
+    // Пока идёт запуск/установка, повторный клик ничего не делает: раньше он
+    // уходил во второй launch и два JVM дрались за одну папку инстанса.
+    if (launchUi.isLaunching) return
+    if (!account || !window.electronAPI) return
+
+    const target = await resolveLaunchTarget()
+    if (!target) return
+
+    if (target.build) {
+      await launchInstance(target.build)
       return
     }
 
     await launchVanilla()
-  }, [isRunning, account, selectedModLoader, selectedVersion, patchLaunchUi, addLog, launchInstance, launchVanilla])
+  }, [isRunning, gameReady, launchUi.isLaunching, account, resolveLaunchTarget, launchInstance, launchVanilla])
+
+  /**
+   * Запуск из карточки быстрой игры. Идёт тем же путём, что и обычная кнопка
+   * «Играть»: с прогрессом, логами, статусом запущенной игры и настройками
+   * Java/инъекторов — отличается только адресом подключения.
+   */
+  const handleQuickPlay = useCallback(async (type: "singleplayer" | "multiplayer", address: string) => {
+    if (isRunning || launchUi.isLaunching || !account || !window.electronAPI) return
+
+    const target = await resolveLaunchTarget()
+    if (!target) return
+
+    const quickPlay: QuickPlayLaunchRequest = { type, address }
+
+    if (target.build) {
+      await launchInstance(target.build, { quickPlay })
+      return
+    }
+
+    await launchVanilla(quickPlay)
+  }, [isRunning, launchUi.isLaunching, account, resolveLaunchTarget, launchInstance, launchVanilla])
 
   const launchDetails = useMemo(() => {
     const parts: string[] = []
     if (launchUi.currentFile !== null && launchUi.totalFiles !== null && launchUi.totalFiles > 0) {
-      parts.push(`fetch failed`)
+      parts.push(`${Math.min(launchUi.currentFile, launchUi.totalFiles)} / ${launchUi.totalFiles}fetch failed`)
     }
     if (launchUi.currentFileName) {
       parts.push(launchUi.currentFileName)
@@ -110,5 +162,5 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
     return parts.join(" · ")
   }, [launchUi.currentFile, launchUi.currentFileName, launchUi.totalFiles])
 
-  return { isRunning, launchUi, launchDetails, handlePlay }
+  return { isRunning, launchUi, launchDetails, handlePlay, handleQuickPlay }
 }

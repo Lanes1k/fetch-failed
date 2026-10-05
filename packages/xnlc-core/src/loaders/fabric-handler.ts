@@ -50,7 +50,7 @@ export class FabricHandler implements ILoaderHandler {
     const metaIntermediary = await this.loaderMetaClient.getVersion("net.fabricmc.intermediary", mcVersion);
 
     if (!metaFabric || !metaIntermediary) {
-      throw new Error(`Fabric components not found in loader meta for MC ${mcVersion}`);
+      throw new Error(`fetch failed${mcVersion}`);
     }
 
     // 2. Fetch Base Minecraft JSON

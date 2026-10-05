@@ -4,9 +4,10 @@ import { IconArrowLeft, IconCamera, IconCheck, IconDownload, IconFolder, IconLoa
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { MOD_LOADERS } from "./constants"
+import { BUILD_MOD_LOADERS } from "./constants"
 import { LoaderIcon } from "./loader-icon"
 import { IconPickerModal } from "./icon-picker-modal"
+import { EntityIcon } from "./entity-icon"
 import { useHomeVersions } from "@/src/hooks/use-home-versions"
 import { useLoaderVersionOptions } from "@/src/hooks/use-loader-version-options"
 import type { ImportProgress } from "@xnlc/types"
@@ -36,27 +37,29 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
   const [mode, setMode] = useState<"create" | "import">("create")
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
-  const [modLoader, setModLoader] = useState(MOD_LOADERS[0].id)
+  const [modLoader, setModLoader] = useState(BUILD_MOD_LOADERS[0].id)
   const [loaderVersion, setLoaderVersion] = useState("")
   const [icon, setIcon] = useState("")
   const [importableInstances, setImportableInstances] = useState<ImportableLauncherInstance[]>([])
   const [selectedImportSource, setSelectedImportSource] = useState<ImportSource | null>(null)
   const [selectedImportIds, setSelectedImportIds] = useState<string[]>([])
   const [importing, setImporting] = useState(false)
+  /** Ждём файл для импорта: диалог закроется с первым событием прогресса. */
+  const fileImportPendingRef = useRef(false)
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null)
   const [customPaths, setCustomPaths] = useState<Record<ImportSource, string>>({
     gdlauncher: "", prism: "", multimc: "", polymc: "", astralrinth: "", xlauncher: "", modrinthapp: "",
   })
   const [showIconPicker, setShowIconPicker] = useState(false)
   const { versions, versionsLoaded, selectedVersion: version, setSelectedVersion: setVersion } = useHomeVersions(modLoader)
-  const { loaderVersions, loaderVersionsLoaded, recommendedLoaderVersion } = useLoaderVersionOptions(modLoader, version)
+  const { loaderVersions, loaderVersionsLoaded, defaultLoaderVersion } = useLoaderVersionOptions(modLoader, version)
   const formFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (open) {
       setMode("create")
       setSelectedImportSource(null)
-      setModLoader(MOD_LOADERS[0].id)
+      setModLoader(BUILD_MOD_LOADERS[0].id)
       setLoaderVersion("")
       setImportProgress(null)
       void window.electronAPI?.discoverImportableInstances?.().then((instances) => {
@@ -71,6 +74,13 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
     if (!open) { setImportProgress(null); return }
     const off = window.electronAPI?.onImportProgress?.((progress) => {
       setImportProgress(progress)
+      // Первое событие прогресса = файл уже выбран в системном окне: закрываем
+      // диалог сразу, иначе «Локальный импорт» висит поверх всего импорта.
+      if (fileImportPendingRef.current) {
+        fileImportPendingRef.current = false
+        setOpen(false)
+        reset()
+      }
     })
     return () => { off?.() }
   }, [open])
@@ -90,8 +100,8 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
 
     if (!loaderVersionsLoaded) return
     if (loaderVersions.some(option => option.value === loaderVersion)) return
-    setLoaderVersion(recommendedLoaderVersion ?? "")
-  }, [loaderVersion, loaderVersions, loaderVersionsLoaded, modLoader, recommendedLoaderVersion])
+    setLoaderVersion(defaultLoaderVersion ?? "")
+  }, [loaderVersion, loaderVersions, loaderVersionsLoaded, modLoader, defaultLoaderVersion])
 
   const handleCreate = async () => {
     await onCreate({ name, description, version, modLoader, loaderVersion: loaderVersion || undefined, icon })
@@ -112,12 +122,12 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
 
   const sourceNames: Record<ImportSource, string> = {
     gdlauncher: "GDLauncher",
-    prism: "Prism Launcher",
+    prism: "fetch failed",
     multimc: "MultiMC",
     polymc: "PolyMC",
     astralrinth: "AstralRinth",
-    xlauncher: "X Launcher",
-    modrinthapp: "Modrinth App",
+    xlauncher: "fetch failed",
+    modrinthapp: "fetch failed",
   }
 
   const filteredImportableInstances = useMemo(() => {
@@ -144,15 +154,18 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
     }
   }
 
-  const handleImportModpackFile = async () => {
-    await onImportFile()
-    await onImported()
-    setOpen(false)
-    reset()
+  const handleImportModpackFile = () => {
+    // Не ждём весь импорт: диалог закроется сам, когда прилетит первый прогресс
+    // (то есть сразу после выбора файла).
+    fileImportPendingRef.current = true
+    void onImportFile()
+      .then(() => onImported())
+      .catch(() => {})
+      .finally(() => { fileImportPendingRef.current = false })
   }
 
   const handlePickCustomPath = useCallback(async (source: ImportSource) => {
-    const pickedPath = await window.electronAPI?.pickFolder(`fetch failed`)
+    const pickedPath = await window.electronAPI?.pickFolder(t("builds.pickFolderTitle", { source: sourceNames[source] }))
     if (!pickedPath) return
     setCustomPaths((prev) => ({ ...prev, [source]: pickedPath }))
     const instances = await window.electronAPI?.discoverFromPath(source, pickedPath)
@@ -208,7 +221,7 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
                   className="w-16 h-16 rounded-xl bg-muted/70 overflow-hidden border border-border cursor-pointer hover:border-primary/50 transition-colors flex-shrink-0 flex items-center justify-center"
                   onClick={() => setShowIconPicker(true)}
                 >
-                  {iconHasImage ? <img src={icon} alt="" className="w-full h-full object-cover" /> : <IconCamera className="w-6 h-6 text-muted-foreground" />}
+                  {iconHasImage ? <EntityIcon src={icon} className="w-full h-full p-2 text-primary" imgClassName="w-full h-full object-cover" /> : <IconCamera className="w-6 h-6 text-muted-foreground" />}
                 </div>
                 {iconHasImage && (
                   <button type="button" onClick={() => setIcon("")} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
@@ -222,12 +235,12 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
               <div className={cn("grid gap-3", requiresLoaderVersion ? "grid-cols-3" : "grid-cols-2")}>
                 <Select value={version} onValueChange={setVersion}>
                   <SelectTrigger className="w-full h-[42px] rounded-xl bg-muted/50 border-border text-foreground">
-                    <SelectValue placeholder="Minecraft" />
+                    <SelectValue placeholder="fetch failed" />
                   </SelectTrigger>
                   <SelectContent>
-                    {!versionsLoaded ? <div className="px-3 py-2 text-sm text-muted-foreground">fetch failed</div>
-                      : versions.length === 0 ? <div className="px-3 py-2 text-sm text-muted-foreground">fetch failed</div>
-                      : versions.map((item) => <SelectItem key={item} value={item}>Minecraft {item}</SelectItem>)}
+                    {!versionsLoaded ? <div className="px-3 py-2 text-sm text-muted-foreground">{t("home.loadingVersions")}</div>
+                      : versions.length === 0 ? <div className="px-3 py-2 text-sm text-muted-foreground">{t("home.failedToLoadVersions")}</div>
+                      : versions.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Select value={modLoader} onValueChange={setModLoader}>
@@ -235,7 +248,7 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
                     <SelectValue placeholder={t("builds.modLoader")} />
                   </SelectTrigger>
                   <SelectContent>
-                    {MOD_LOADERS.map((item) => (
+                    {BUILD_MOD_LOADERS.map((item) => (
                       <SelectItem key={item.id} value={item.id}>
                         <span className="flex items-center gap-2">
                           <LoaderIcon loaderId={item.id} className="w-4 h-4 flex-shrink-0" />
@@ -248,11 +261,11 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
                 {requiresLoaderVersion && (
                   <Select value={loaderVersion} onValueChange={setLoaderVersion} disabled={!loaderVersionsLoaded || loaderVersions.length === 0}>
                     <SelectTrigger className="w-full h-[42px] rounded-xl bg-muted/50 border-border text-foreground">
-                      <SelectValue placeholder={loaderVersionsLoaded ? "Loader Version" : "Loading..."} />
+                      <SelectValue placeholder={loaderVersionsLoaded ? t("home.loaderVersion") : t("home.loadingVersions")} />
                     </SelectTrigger>
                     <SelectContent>
-                      {!loaderVersionsLoaded ? <div className="px-3 py-2 text-sm text-muted-foreground">fetch failed</div>
-                        : loaderVersions.length === 0 ? <div className="px-3 py-2 text-sm text-muted-foreground">fetch failed</div>
+                      {!loaderVersionsLoaded ? <div className="px-3 py-2 text-sm text-muted-foreground">{t("home.loaderVersionLoading")}</div>
+                        : loaderVersions.length === 0 ? <div className="px-3 py-2 text-sm text-muted-foreground">{t("home.noLoaderVersions")}</div>
                         : loaderVersions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
@@ -260,7 +273,11 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
               </div>
               {requiresLoaderVersion && (
                 <p className="text-xs text-muted-foreground">
-                  {!loaderVersionsLoaded ? "Loading available loader versions..." : loaderVersion ? `Selected loader version: ${loaderVersion}` : "Choose an exact loader version for this instance"}
+                  {!loaderVersionsLoaded
+                    ? t("home.loaderVersionLoading")
+                    : loaderVersion
+                      ? t("home.loaderVersionSelected", { version: loaderVersion })
+                      : t("home.chooseLoaderVersion")}
                 </p>
               )}
             </div>
@@ -279,7 +296,7 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
                       </button>
                       <div>
                         <div className="text-sm font-medium text-foreground">{sourceNames[selectedImportSource]}</div>
-                        <div className="text-xs text-muted-foreground">fetch failed</div>
+                        <div className="text-xs text-muted-foreground">{t("builds.chooseBuildsToImport")}</div>
                       </div>
                     </div>
                     <button
@@ -299,9 +316,9 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
                       <input
                         type="text"
                         readOnly
-                        value={customPaths[selectedImportSource] || `fetch failed`}
+                        value={customPaths[selectedImportSource] || t("builds.autoDetect")}
                         className="w-full pl-9 pr-3 py-2 rounded-xl bg-muted/30 border border-border text-xs text-muted-foreground cursor-default"
-                        title={customPaths[selectedImportSource] || "fetch failed"}
+                        title={customPaths[selectedImportSource] || t("builds.pathAutoDetected")}
                       />
                     </div>
                     <button
@@ -310,7 +327,7 @@ export function InstanceCreateDialog({ open, setOpen, onCreate, onImported, onIm
                       className="flex h-[38px] shrink-0 items-center gap-1.5 px-3 rounded-xl border border-border bg-muted/30 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
                     >
                       <IconFolder className="h-3.5 w-3.5" strokeWidth={1.75} />
-fetch failed
+                      {t("builds.browse")}
                     </button>
                   </div>
 
@@ -320,22 +337,22 @@ fetch failed
                         <span className="truncate">{importProgress.message}</span>
                         <span className="shrink-0 ml-2">{importProgress.total > 0 ? Math.round((importProgress.current / importProgress.total) * 100) : 0}%</span>
                       </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/50">
-                        <div
-                          className="h-full rounded-full bg-primary transition-all duration-300"
-                          style={{ width: `${importProgress.total > 0 ? (importProgress.current / importProgress.total) * 100 : 0}%` }}
-                        />
+                      <div className={cn("h-1.5 w-full rounded-full bg-muted/50", importProgress.total <= 0 && "progress-indeterminate")}>
+                        {/* Размер неизвестен — полоса бежит вместо пустой шкалы. */}
+                        {importProgress.total > 0 && (
+                          <div
+                            className="h-full rounded-full bg-primary transition-all duration-300"
+                            style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}
+                          />
+                        )}
                       </div>
-                      {importProgress.itemName && (
-                        <div className="text-[10px] text-muted-foreground truncate">{importProgress.itemName}</div>
-                      )}
                     </div>
                   )}
 
                   <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
                     {filteredImportableInstances.length === 0 && (
                       <div className="rounded-xl border border-dashed border-border px-4 py-6 text-sm text-center text-muted-foreground">
-fetch failed
+                        {t("builds.nothingFoundForLauncher")}
                       </div>
                     )}
 
@@ -363,8 +380,11 @@ fetch failed
                             <div className="flex items-center gap-2">
                               <span className="truncate font-medium text-foreground">{instance.name}</span>
                             </div>
-                            <div className="mt-1 text-xs text-muted-foreground">
-                              {instance.version} • {instance.loaderVersion ? `${instance.modLoader} ${instance.loaderVersion}` : instance.modLoader}
+                            <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <span>{instance.version}</span>
+                              <span>•</span>
+                              <LoaderIcon loaderId={instance.modLoader} className="w-3.5 h-3.5 flex-shrink-0" />
+                              <span className="capitalize">{instance.loaderVersion ? `${instance.modLoader} ${instance.loaderVersion}` : instance.modLoader}</span>
                             </div>
                           </div>
                           <div className={cn(
@@ -383,8 +403,8 @@ fetch failed
               ) : (
                 <>
                   <div className="rounded-2xl border border-border bg-muted/10 p-4">
-                    <div className="text-sm font-medium text-foreground">fetch failed</div>
-                    <div className="mt-1 text-xs text-muted-foreground">fetch failed</div>
+                    <div className="text-sm font-medium text-foreground">{t("builds.localImport")}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{t("builds.localImportDesc")}</div>
 
                     <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
                       <button
@@ -398,7 +418,7 @@ fetch failed
                               <path fill="currentColor" d="M12.252.004a11.78 11.768 0 0 0-8.92 3.73a11 11 0 0 0-2.17 3.11a11.37 11.359 0 0 0-1.16 5.169c0 1.42.17 2.5.6 3.77c.24.759.77 1.899 1.17 2.529a12.3 12.298 0 0 0 8.85 5.639c.44.05 2.54.07 2.76.02c.2-.04.22.1-.26-1.7l-.36-1.37l-1.01-.06a8.5 8.489 0 0 1-5.18-1.8a5.3 5.3 0 0 1-1.3-1.26c0-.05.34-.28.74-.5a37.572 37.545 0 0 1 2.88-1.629c.03 0 .5.45 1.06.98l1 .97l2.07-.43l2.06-.43l1.47-1.47c.8-.8 1.48-1.5 1.48-1.52c0-.09-.42-1.63-.46-1.7c-.04-.06-.2-.03-1.02.18c-.53.13-1.2.3-1.45.4l-.48.15l-.53.53l-.53.53l-.93.1l-.93.07l-.52-.5a2.7 2.7 0 0 1-.96-1.7l-.13-.6l.43-.57c.68-.9.68-.9 1.46-1.1c.4-.1.65-.2.83-.33c.13-.099.65-.579 1.14-1.069l.9-.9l-.7-.7l-.7-.7l-1.95.54c-1.07.3-1.96.53-1.97.53c-.03 0-2.23 2.48-2.63 2.97l-.29.35l.28 1.03c.16.56.3 1.16.31 1.34l.03.3l-.34.23c-.37.23-2.22 1.3-2.84 1.63-.36.2-.37.2-.44.1c-.08-.1-.23-.6-.32-1.03c-.18-.86-.17-2.75.02-3.73a8.84 8.84 0 0 1 7.9-6.93c.43-.03.77-.08.78-.1c.06-.17.5-2.999.47-3.039c-.01-.02-.1-.02-.2-.03Zm3.68.67c-.2 0-.3.1-.37.38c-.06.23-.46 2.42-.46 2.52c0 .04.1.11.22.16a8.51 8.499 0 0 1 2.99 2a8.38 8.379 0 0 1 2.16 3.449a6.9 6.9 0 0 1 .4 2.8c0 1.07 0 1.27-.1 1.73a9.4 9.4 0 0 1-1.76 3.769c-.32.4-.98 1.06-1.37 1.38c-.38.32-1.54 1.1-1.7 1.14c-.1.03-.1.06-.07.26c.03.18.64 2.56.7 2.78l.06.06a12.07 12.058 0 0 0 7.27-9.4c.13-.77.13-2.58 0-3.4a11.96 11.948 0 0 0-5.73-8.578c-.7-.42-2.05-1.06-2.25-1.06Z"/>
                             </svg>
                           </div>
-                          <div className="text-sm font-medium leading-tight text-foreground">fetch failed</div>
+                          <div className="text-sm font-medium leading-tight text-foreground">{t("builds.importMrpack")}</div>
                         </div>
                       </button>
 
@@ -413,7 +433,20 @@ fetch failed
                               <path fill="currentColor" d="M18.326 9.215s4.9-.773 5.674-3.027h-7.507V4.4H0l2.032 2.358v2.415s5.127-.266 7.11 1.237c2.714 2.516-3.053 5.917-3.053 5.917l-.99 3.273c1.547-1.473 4.494-3.377 9.899-3.286c-2.057.65-4.125 1.665-5.735 3.286h10.925l-1.029-3.273s-7.918-4.668-.833-7.112"/>
                             </svg>
                           </div>
-                          <div className="text-sm font-medium leading-tight text-foreground">fetch failed</div>
+                          <div className="text-sm font-medium leading-tight text-foreground">{t("builds.importZip")}</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleImportModpackFile()}
+                        className="flex min-h-[112px] items-center justify-center rounded-2xl border border-border bg-muted/20 p-2.5 text-center transition-colors hover:border-primary/40 hover:bg-muted/30"
+                      >
+                        <div className="flex flex-col items-center justify-center gap-2.5">
+                          <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-primary/25 bg-background text-primary">
+                            <IconDownload className="h-8 w-8" strokeWidth={1.5} />
+                          </div>
+                          <div className="text-sm font-medium leading-tight text-foreground">{t("builds.importXneon")}</div>
                         </div>
                       </button>
 
@@ -436,7 +469,7 @@ fetch failed
 
                     {groupedSources.length === 0 && (
                       <div className="mt-3 text-xs text-muted-foreground">
-fetch failed
+                        {t("builds.noOtherLaunchers")}
                       </div>
                     )}
                   </div>

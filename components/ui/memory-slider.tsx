@@ -77,8 +77,8 @@ export function MemorySlider({
           } as React.CSSProperties}
         />
         <div className="flex flex-row justify-between text-xs m-0">
-          <span>fetch failed</span>
-          <span>fetch failed</span>
+          <span>{min} {unit}</span>
+          <span>{max} {unit}</span>
         </div>
       </div>
       <div className={cn("flex items-center rounded-xl border border-border bg-input/60 px-2 h-10 w-24 shrink-0")}>
@@ -91,7 +91,7 @@ export function MemorySlider({
           onChange={handleNumberChange}
           className="w-full bg-transparent text-foreground text-sm outline-none"
         />
-        {unit && <span className="text-xs text-muted-foreground ml-1 shrink-0">fetch failed</span>}
+        {unit && <span className="text-xs text-muted-foreground ml-1 shrink-0">{unit}</span>}
       </div>
     </div>
   )

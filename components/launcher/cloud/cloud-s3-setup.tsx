@@ -1,5 +1,8 @@
 import { useState } from "react"
 import { IconLoader2 } from "@tabler/icons-react"
+import { useTranslation } from "react-i18next"
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
+import { ModalLayer } from "@/components/ui/modal-layer"
 
 type Props = {
   onClose: () => void
@@ -8,6 +11,7 @@ type Props = {
 }
 
 export function S3SetupModal({ onClose, onConnect, connecting }: Props) {
+  const { t } = useTranslation()
   const [endpoint, setEndpoint] = useState("")
   const [bucket, setBucket] = useState("")
   const [accessKeyId, setAccessKeyId] = useState("")
@@ -21,14 +25,13 @@ export function S3SetupModal({ onClose, onConnect, connecting }: Props) {
   }
 
   const inputClass = "w-full px-3 py-2 rounded-xl bg-muted/50 border border-border text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:border-primary/50 transition-colors"
-  const selectClass = "w-full px-3 py-2 rounded-xl bg-muted/50 border border-border text-sm text-foreground focus:outline-none focus:border-primary/50 transition-colors appearance-none cursor-pointer"
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="w-full max-w-sm mx-4 rounded-2xl bg-card border border-border shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
+    <ModalLayer onClose={onClose} className="bg-black/50">
+      <div className="w-full max-w-sm mx-4 rounded-2xl bg-card border border-border shadow-xl overflow-hidden">
         <div className="p-5">
           <h3 className="text-lg font-semibold text-foreground mb-1">fetch failed</h3>
-          <p className="text-sm text-muted-foreground mb-4">fetch failed</p>
+          <p className="text-sm text-muted-foreground mb-4">{t("cloud.s3.desc")}</p>
 
           <div className="space-y-3">
             <div>
@@ -40,13 +43,13 @@ export function S3SetupModal({ onClose, onConnect, connecting }: Props) {
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">fetch failed</label>
               <input value={bucket} onChange={e => setBucket(e.target.value)}
-                placeholder="my-bucket"
+                placeholder="fetch failed"
                 className={inputClass} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">fetch failed</label>
               <input value={accessKeyId} onChange={e => setAccessKeyId(e.target.value)}
-                placeholder="AKIAIOSFODNN7EXAMPLE"
+                placeholder="fetch failed"
                 className={inputClass} />
             </div>
             <div>
@@ -59,19 +62,20 @@ export function S3SetupModal({ onClose, onConnect, connecting }: Props) {
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">fetch failed</label>
                 <input value={region} onChange={e => setRegion(e.target.value)}
-                  placeholder="us-east-1"
+                  placeholder="fetch failed"
                   className={inputClass} />
               </div>
-              <div className="relative">
+              <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">fetch failed</label>
-                <select value={forcePathStyle} onChange={e => setForcePathStyle(e.target.value)}
-                  className={selectClass}>
-                  <option value="true">fetch failed</option>
-                  <option value="false">fetch failed</option>
-                </select>
-                <svg className="absolute right-3 top-[calc(50%+6px)] -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
+                <Select value={forcePathStyle} onValueChange={setForcePathStyle}>
+                  <SelectTrigger className="w-full rounded-xl bg-muted/50 border-border text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="true">fetch failed</SelectItem>
+                    <SelectItem value="false">fetch failed</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </div>
@@ -79,15 +83,15 @@ export function S3SetupModal({ onClose, onConnect, connecting }: Props) {
         <div className="p-3 border-t border-border flex justify-end gap-2">
           <button onClick={onClose}
             className="px-4 py-2 rounded-xl text-sm font-medium bg-muted/50 hover:bg-muted text-foreground transition-colors">
-fetch failed
+            {t("common.cancel")}
           </button>
           <button onClick={handleSubmit} disabled={connecting || !endpoint.trim() || !bucket.trim() || !accessKeyId.trim() || !secretAccessKey.trim()}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-primary hover:bg-primary/90 text-primary-foreground transition-all disabled:opacity-50">
             {connecting && <IconLoader2 className="w-4 h-4 animate-spin" />}
-fetch failed
+            {t("cloud.connect")}
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   )
 }

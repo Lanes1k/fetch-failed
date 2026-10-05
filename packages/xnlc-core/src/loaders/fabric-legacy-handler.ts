@@ -22,7 +22,7 @@ export class FabricLegacyHandler implements ILoaderHandler {
 
   async getLoaderVersionsForGame(mcVersion: string): Promise<FabricLoaderVersion[]> {
     const res = await fetch(`${FABRIC_META}/versions/loader/${mcVersion}`);
-    if (!res.ok) throw new Error(`Failed to fetch Fabric loader versions for ${mcVersion}: ${res.status}`);
+    if (!res.ok) throw new Error(`fetch failed${mcVersion}: ${res.status}`);
     const data = await res.json() as Array<{ loader: FabricLoaderVersion }>;
     return data.map((item) => item.loader);
   }
@@ -39,7 +39,7 @@ export class FabricLegacyHandler implements ILoaderHandler {
     // Fetch installer JSON from Fabric API
     const res = await fetch(`${FABRIC_META}/versions/loader/${mcVersion}/${loaderVersion}/profile/json`);
     if (!res.ok) {
-      throw new Error(`Failed to fetch Fabric profile: ${res.status}`);
+      throw new Error(`fetch failed${res.status}`);
     }
 
     const profileJson = await res.json() as Record<string, unknown>;

@@ -1,3 +1,4 @@
+import { opFailure } from "./errors"
 // ============================================================
 // Worlds & Screenshots IPC Handlers
 // Per-build save management: list/rename/delete/icon/seed,
@@ -10,38 +11,7 @@ import path from "path"
 import fs from "fs/promises"
 import type { NBTCompound } from "@xnlc/nbt"
 import { ensureBuildIntentDir, downloadBuffer, sanitizeFileName } from "./builds/helpers"
-
-type WorldInfo = {
-  folder: string
-  name: string
-  seed: string
-  gameMode: string
-  hardcore: boolean
-  lastPlayed: number
-  playedTime: number
-  mcVersion: string
-  iconDataUrl: string
-  sizeBytes: number
-  lastModified: number
-  path: string
-  datapackCount: number
-  hasLevelData: boolean
-}
-
-type DatapackInfo = {
-  name: string
-  sizeBytes: number
-  lastModified: number
-  path: string
-}
-
-type ScreenshotInfo = {
-  name: string
-  sizeBytes: number
-  lastModified: number
-  thumbDataUrl: string
-  path: string
-}
+import type { WorldInfo, DatapackInfo, ScreenshotInfo } from "@xnlc/types" with { "resolution-mode": "import" }
 
 type OpResult = { success: boolean; error?: string }
 
@@ -107,7 +77,30 @@ async function updateLevelName(worldPath: string, newName: string): Promise<void
   } catch { /* level.dat update is best-effort */ }
 }
 
+/**
+ * Кэш размеров каталогов.
+ *
+ * `dirSize` рекурсивно обходит всё дерево (до 200 000 записей) со `stat` на
+ * каждый файл, и вызывался для каждого мира при каждом `worlds:list`. Размер
+ * меняется только когда игра пишет в мир, поэтому держим результат с TTL и
+ * сбрасываем его при изменении mtime самого каталога (создание/удаление файлов).
+ */
+const DIR_SIZE_TTL_MS = 60_000
+const dirSizeCache = new Map<string, { size: number; dirMtimeMs: number; at: number }>()
+
 async function dirSize(dirPath: string, maxEntries = 200000): Promise<number> {
+  let dirMtimeMs = 0
+  try {
+    dirMtimeMs = (await fs.stat(dirPath)).mtimeMs
+  } catch {
+    return 0
+  }
+
+  const cached = dirSizeCache.get(dirPath)
+  if (cached && cached.dirMtimeMs === dirMtimeMs && Date.now() - cached.at < DIR_SIZE_TTL_MS) {
+    return cached.size
+  }
+
   let total = 0
   let count = 0
   const walk = async (dir: string): Promise<void> => {
@@ -126,6 +119,7 @@ async function dirSize(dirPath: string, maxEntries = 200000): Promise<number> {
     }
   }
   await walk(dirPath)
+  dirSizeCache.set(dirPath, { size: total, dirMtimeMs, at: Date.now() })
   return total
 }
 
@@ -282,6 +276,59 @@ async function listDatapacks(worldPath: string): Promise<DatapackInfo[]> {
 
 // ---------- Handlers ----------
 
+async function unpackWorldZip(
+  savesDir: string,
+  zipBufferOrPath: string | Buffer,
+  fallbackName: string,
+  newName?: string,
+): Promise<OpResult & { folder?: string }> {
+  try {
+    const AdmZip = (await import("adm-zip")).default
+    const zip = new AdmZip(zipBufferOrPath)
+    const entries: Array<{ entryName: string; isDirectory: boolean; getData: () => Buffer }> = zip.getEntries()
+    const levelEntry = entries.find(e => !e.isDirectory && e.entryName.replace(/\\/g, "/").split("/").pop() === "level.dat")
+    if (!levelEntry) {
+      return { success: false, error: "fetch failed" }
+    }
+
+    // Определяем корневую папку мира внутри архива.
+    const levelPath = levelEntry.entryName.replace(/\\/g, "/")
+    const slashIdx = levelPath.lastIndexOf("/")
+    const levelDir = slashIdx === -1 ? "" : levelPath.slice(0, slashIdx)
+    let prefix: string
+    let defaultFolderName: string
+    if (levelDir) {
+      const firstSegment = levelDir.split("/")[0]
+      prefix = `${firstSegment}/`
+      defaultFolderName = firstSegment
+    } else {
+      prefix = ""
+      defaultFolderName = fallbackName || "world"
+    }
+
+    const trimmedName = newName?.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "").slice(0, 64) ?? ""
+    const destFolder = await uniqueFolderPath(savesDir, (trimmedName || defaultFolderName).replace(/\s+/g, "_"))
+    const destRoot = path.join(savesDir, destFolder)
+    await fs.mkdir(destRoot, { recursive: true })
+
+    for (const entry of entries) {
+      if (entry.isDirectory) continue
+      const entryPath = entry.entryName.replace(/\\/g, "/")
+      if (prefix && !entryPath.startsWith(prefix)) continue
+      const rel = prefix ? entryPath.slice(prefix.length) : entryPath
+      const target = resolveRelativeSafe(destRoot, rel)
+      if (!target) continue
+      await fs.mkdir(path.dirname(target), { recursive: true })
+      await fs.writeFile(target, entry.getData())
+    }
+
+    if (trimmedName) await updateLevelName(destRoot, trimmedName)
+    return { success: true, folder: destFolder }
+  } catch (error) {
+    return opFailure(error)
+  }
+}
+
 export function registerWorldsHandlers(): void {
   ipcMain.handle("worlds:list", async (_event, buildName: string): Promise<WorldInfo[]> => {
     try {
@@ -315,23 +362,11 @@ export function registerWorldsHandlers(): void {
       }
 
       // Update LevelName inside level.dat (keep in-sync display name)
-      const targetWorldPath = newWorldPath
-      const level = await readLevelNbt(targetWorldPath)
-      if (level) {
-        try {
-          const nbt = await import("@xnlc/nbt")
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const data = (level as any).Data
-          if (data?.LevelName) {
-            data.LevelName = trimmedName
-            await fs.writeFile(path.join(targetWorldPath, "level.dat"), new nbt.NBTWriter().write(level, { compressed: "gzip" }))
-          }
-        } catch { /* level.dat update is best-effort */ }
-      }
+      await updateLevelName(newWorldPath, trimmedName)
 
       return { success: true }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 
@@ -344,7 +379,7 @@ export function registerWorldsHandlers(): void {
       await fs.rm(worldPath, { recursive: true, force: true })
       return { success: true }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 
@@ -361,7 +396,7 @@ export function registerWorldsHandlers(): void {
       await fs.writeFile(path.join(worldPath, "icon.png"), resized.toPNG())
       return { success: true }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 
@@ -374,7 +409,7 @@ export function registerWorldsHandlers(): void {
       await fs.rm(path.join(worldPath, "icon.png"), { force: true })
       return { success: true }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 
@@ -394,7 +429,7 @@ export function registerWorldsHandlers(): void {
       await updateLevelName(newWorldPath, trimmedName)
       return { success: true, folder: newFolder }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 
@@ -402,49 +437,23 @@ export function registerWorldsHandlers(): void {
     try {
       const gameDir = await getGameDir(buildName)
       const savesDir = path.join(gameDir, "saves")
-      const AdmZip = (await import("adm-zip")).default
-      const zip = new AdmZip(localFilePath)
-      const entries: Array<{ entryName: string; isDirectory: boolean; getData: () => Buffer }> = zip.getEntries()
-      const levelEntry = entries.find(e => !e.isDirectory && e.entryName.replace(/\\/g, "/").split("/").pop() === "level.dat")
-      if (!levelEntry) {
-        return { success: false, error: "fetch failed" }
-      }
-
-      // Определяем корневую папку мира внутри архива.
-      const levelPath = levelEntry.entryName.replace(/\\/g, "/")
-      const slashIdx = levelPath.lastIndexOf("/")
-      const levelDir = slashIdx === -1 ? "" : levelPath.slice(0, slashIdx)
-      let prefix: string
-      let defaultFolderName: string
-      if (levelDir) {
-        const firstSegment = levelDir.split("/")[0]
-        prefix = `${firstSegment}/`
-        defaultFolderName = firstSegment
-      } else {
-        prefix = ""
-        defaultFolderName = path.basename(localFilePath, path.extname(localFilePath))
-      }
-
-      const trimmedName = newName?.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "").slice(0, 64) ?? ""
-      const destFolder = await uniqueFolderPath(savesDir, (trimmedName || defaultFolderName).replace(/\s+/g, "_"))
-      const destRoot = path.join(savesDir, destFolder)
-      await fs.mkdir(destRoot, { recursive: true })
-
-      for (const entry of entries) {
-        if (entry.isDirectory) continue
-        const entryPath = entry.entryName.replace(/\\/g, "/")
-        if (prefix && !entryPath.startsWith(prefix)) continue
-        const rel = prefix ? entryPath.slice(prefix.length) : entryPath
-        const target = resolveRelativeSafe(destRoot, rel)
-        if (!target) continue
-        await fs.mkdir(path.dirname(target), { recursive: true })
-        await fs.writeFile(target, entry.getData())
-      }
-
-      if (trimmedName) await updateLevelName(destRoot, trimmedName)
-      return { success: true, folder: destFolder }
+      const fallbackName = path.basename(localFilePath, path.extname(localFilePath))
+      return await unpackWorldZip(savesDir, localFilePath, fallbackName, newName)
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
+    }
+  })
+
+  ipcMain.handle("worlds:import-remote", async (_event, buildName: string, url: string, preferredName?: string): Promise<OpResult & { folder?: string }> => {
+    try {
+      const gameDir = await getGameDir(buildName)
+      const savesDir = path.join(gameDir, "saves")
+      const safeFileName = sanitizeFileName((preferredName || "world").replace(/\s+/g, "_") + ".zip")
+      const buffer = await downloadBuffer(url, undefined, safeFileName)
+      const fallbackName = (preferredName || "imported_map").trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+      return await unpackWorldZip(savesDir, buffer, fallbackName, preferredName)
+    } catch (error) {
+      return opFailure(error)
     }
   })
 
@@ -478,7 +487,7 @@ export function registerWorldsHandlers(): void {
       }
       return { success: true, path: filePath }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 
@@ -497,7 +506,7 @@ export function registerWorldsHandlers(): void {
       }
       return { success: true, path: destPath }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 
@@ -513,17 +522,29 @@ export function registerWorldsHandlers(): void {
       await fs.rm(filePath, { recursive: true, force: true })
       return { success: true }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 
   // ---------- Screenshots ----------
+
+  /**
+   * Кэш миниатюр скриншотов.
+   *
+   * Раньше `screenshots:list` читал КАЖДЫЙ файл целиком, декодировал его и
+   * пересобирал PNG-миниатюру при каждом открытии вкладки. Теперь миниатюра
+   * сохраняется рядом (`<shots>/.thumbs/<name>.png`) и пересобирается только
+   * если исходник новее; в памяти держим последний результат на сессию.
+   * Ключ — путь к исходнику, инвалидация по mtime+size.
+   */
+  const thumbCache = new Map<string, { mtime: number; size: number; dataUrl: string }>()
 
   const listScreenshots = async (buildName: string): Promise<ScreenshotInfo[]> => {
     const gameDir = await getGameDir(buildName)
     const shotsDir = path.join(gameDir, "screenshots")
     let entries: string[] = []
     try { entries = await fs.readdir(shotsDir) } catch { return [] }
+    const thumbsDir = path.join(shotsDir, ".thumbs")
     const result: ScreenshotInfo[] = []
     for (const entry of entries) {
       if (!/\.(png|jpe?g|webp|bmp)$/i.test(entry)) continue
@@ -531,17 +552,46 @@ export function registerWorldsHandlers(): void {
       try {
         const stat = await fs.stat(full)
         if (!stat.isFile()) continue
-        const buffer = await fs.readFile(full)
-        const image = nativeImage.createFromBuffer(buffer)
-        if (image.isEmpty()) continue
-        const size = image.getSize()
-        const maxDim = Math.max(size.width, size.height)
-        const thumb = maxDim > 480 ? image.resize({ width: Math.round(size.width * 480 / maxDim) }) : image
+
+        const cached = thumbCache.get(full)
+        let dataUrl: string | undefined
+        if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) {
+          dataUrl = cached.dataUrl
+        }
+
+        if (!dataUrl) {
+          const thumbPath = path.join(thumbsDir, `${entry}.png`)
+          // Дисковый кэш: если миниатюра не старше исходника — берём её,
+          // декодирование полноразмерного скриншота не нужно.
+          try {
+            const thumbStat = await fs.stat(thumbPath)
+            if (thumbStat.mtimeMs >= stat.mtimeMs) {
+              dataUrl = fileToDataUrl(await fs.readFile(thumbPath), "image/png")
+            }
+          } catch { /* миниатюры ещё нет */ }
+        }
+
+        if (!dataUrl) {
+          const buffer = await fs.readFile(full)
+          const image = nativeImage.createFromBuffer(buffer)
+          if (image.isEmpty()) continue
+          const size = image.getSize()
+          const maxDim = Math.max(size.width, size.height)
+          const thumb = maxDim > 480 ? image.resize({ width: Math.round(size.width * 480 / maxDim) }) : image
+          const png = thumb.toPNG()
+          dataUrl = fileToDataUrl(png, "image/png")
+          try {
+            await fs.mkdir(thumbsDir, { recursive: true })
+            await fs.writeFile(path.join(thumbsDir, `${entry}.png`), png)
+          } catch { /* дисковый кэш необязателен */ }
+        }
+
+        thumbCache.set(full, { mtime: stat.mtimeMs, size: stat.size, dataUrl })
         result.push({
           name: entry,
           sizeBytes: stat.size,
           lastModified: stat.mtimeMs,
-          thumbDataUrl: fileToDataUrl(thumb.toPNG(), "image/png"),
+          thumbDataUrl: dataUrl,
           path: full,
         })
       } catch { /* ignore */ }
@@ -565,6 +615,12 @@ export function registerWorldsHandlers(): void {
       const filePath = resolveChildPath(shotsDir, fileName)
       if (!filePath) return null
       const buffer = await fs.readFile(filePath)
+      // JPEG отдаём как есть: раньше PNG-перекодирование раздувало payload и
+      // тратило время на декодирование/кодирование без выигрыша в качестве.
+      const ext = path.extname(filePath).toLowerCase()
+      if (ext === ".jpg" || ext === ".jpeg") {
+        return fileToDataUrl(buffer, "image/jpeg")
+      }
       const image = nativeImage.createFromBuffer(buffer)
       if (image.isEmpty()) return null
       return fileToDataUrl(image.toPNG(), "image/png")
@@ -582,7 +638,7 @@ export function registerWorldsHandlers(): void {
       await fs.rm(filePath, { force: true })
       return { success: true }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 
@@ -607,7 +663,7 @@ export function registerWorldsHandlers(): void {
       await fs.rename(src, dest)
       return { success: true }
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) }
+      return opFailure(error)
     }
   })
 }

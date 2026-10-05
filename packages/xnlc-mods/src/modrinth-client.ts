@@ -7,6 +7,7 @@ import type {
   ContentType,
   ModSort,
   ModLoaderFilter,
+  ModEnvironment,
   ModSearchResult,
   ModSearchResponse,
   ModDetails,
@@ -31,7 +32,7 @@ async function mrFetch(endpoint: string): Promise<unknown> {
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
       const res = await fetch(`${MODRINTH_API}${endpoint}`, {
-        headers: { "User-Agent": "XNeon-Launcher/1.0 (launcher@xneon.fun)" },
+        headers: { "User-Agent": "Xneon-Launcher/1.0 (launcher@xneon.fun)" },
         signal: controller.signal,
       });
       if (res.status === 429) {
@@ -40,7 +41,7 @@ async function mrFetch(endpoint: string): Promise<unknown> {
         await new Promise(r => setTimeout(r, retryAfter * 1000));
         continue;
       }
-      if (!res.ok) throw new Error(`Modrinth API ${res.status}: ${res.statusText}`);
+      if (!res.ok) throw new Error(`fetch failed${res.status}: ${res.statusText}`);
       return await res.json();
     } catch (err: any) {
       lastError = err;
@@ -53,7 +54,15 @@ async function mrFetch(endpoint: string): Promise<unknown> {
   throw lastError;
 }
 
+const KNOWN_MR_LOADERS = new Set(["forge", "fabric", "neoforge", "quilt", "liteloader", "rift", "modloader"]);
+
 function normalizeMrProject(item: any): ModSearchResult {
+  const versions: string[] = Array.isArray(item.versions) ? item.versions : [];
+  const rawCats: string[] = Array.isArray(item.categories) ? item.categories : [];
+  const loaders = rawCats
+    .map(c => String(c).toLowerCase())
+    .filter(c => KNOWN_MR_LOADERS.has(c));
+
   return {
     id: item.slug ?? item.project_id ?? String(item.id ?? ""),
     slug: item.slug ?? item.project_id ?? "",
@@ -61,12 +70,14 @@ function normalizeMrProject(item: any): ModSearchResult {
     summary: item.description ?? "",
     iconUrl: item.icon_url ?? "",
     downloadCount: item.downloads ?? 0,
-    categories: (item.categories ?? []).slice(0, 5),
+    categories: rawCats.slice(0, 5),
     source: "modrinth",
     author: item.author ?? (Array.isArray(item.authors) ? item.authors.map((a: any) => a.user?.username ?? a.name).filter(Boolean).join(", ") : undefined),
     projectId: item.project_id ?? item.slug,
     dateCreated: item.date_created ?? undefined,
     dateModified: item.date_modified ?? undefined,
+    gameVersions: versions,
+    loaders,
   };
 }
 
@@ -74,6 +85,7 @@ function normalizeMrVersion(v: any): ModVersion {
   return {
     id: v.id ?? "",
     name: v.name ?? v.version_number ?? "",
+    versionNumber: v.version_number ?? undefined,
     gameVersion: (v.game_versions ?? []).join(", "),
     downloadCount: v.downloads ?? 0,
     fileName: v.files?.[0]?.filename ?? "",
@@ -87,6 +99,7 @@ function normalizeMrVersion(v: any): ModVersion {
       url: f.url ?? "",
       size: f.size ?? 0,
       filename: f.filename ?? "",
+      hashes: f.hashes ?? {},
     })),
     dependencies: (v.dependencies ?? []).map((d: any) => ({
       projectId: d.project_id ?? "",
@@ -107,9 +120,13 @@ export async function modrinthSearch(
     categories?: string[];
     sortBy?: ModSort;
     page?: number;
+    environment?: ModEnvironment;
   },
 ): Promise<ModSearchResponse> {
   const contentType = options?.contentType ?? "mod";
+  if (contentType === "world") {
+    return { results: [], totalCount: 0 };
+  }
   const gameVersion = options?.gameVersion;
   const modLoader = options?.modLoader;
   const categories = options?.categories ?? (options?.category ? [options.category] : []);
@@ -123,6 +140,11 @@ export async function modrinthSearch(
   for (const c of categories) {
     if (!c) continue;
     facets.push([`categories:${c.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`]);
+  }
+  if (options?.environment === "client") {
+    facets.push(["client_side:required", "client_side:optional"]);
+  } else if (options?.environment === "server") {
+    facets.push(["server_side:required", "server_side:optional"]);
   }
 
   const sortOption = MOD_SORT_OPTIONS.find(o => o.id === sortBy);
@@ -141,11 +163,38 @@ export async function modrinthSearch(
   };
 }
 
+/** Размер страницы версий Modrinth (максимум, который принимает API). */
+const MR_VERSIONS_PAGE_SIZE = 100;
+/** Предохранитель от бесконечной пагинации: 10 страниц по 100 версий. */
+const MR_VERSIONS_MAX = 1000;
+
+/**
+ * Все версии проекта.
+ *
+ * `/project/{id}/version` отдаёт версии постранично, и раньше клиент запрашивал
+ * только первые 100. У проектов с длинной историей (Jade — 333 версии) нужные
+ * файлы могли не попасть в список, и модалка писала «нет версий» для сборки,
+ * под которую файлы на самом деле есть. Поэтому идём по страницам до конца.
+ */
+async function fetchAllMrProjectVersions(slug: string): Promise<any[]> {
+  const all: any[] = [];
+  while (all.length < MR_VERSIONS_MAX) {
+    const page = (await mrFetch(
+      `/project/${slug}/version?limit=${MR_VERSIONS_PAGE_SIZE}&offset=${all.length}`,
+    )) as any[];
+    const batch = Array.isArray(page) ? page : [];
+    all.push(...batch);
+    // Неполная страница означает конец списка.
+    if (batch.length < MR_VERSIONS_PAGE_SIZE) break;
+  }
+  return all;
+}
+
 export async function modrinthGetDetails(slug: string): Promise<ModDetails | null> {
   try {
     const [projectData, versionsData] = await Promise.all([
       mrFetch(`/project/${slug}`),
-      mrFetch(`/project/${slug}/version?limit=100`),
+      fetchAllMrProjectVersions(slug),
     ]);
 
     const p = projectData as any;
@@ -165,6 +214,15 @@ export async function modrinthGetDetails(slug: string): Promise<ModDetails | nul
       source: "modrinth",
       body: p.body ?? "",
       projectId: p.id ?? p.slug,
+      links: {
+        wikiUrl: p.wiki_url || undefined,
+        issuesUrl: p.issues_url || undefined,
+        sourceUrl: p.source_url || undefined,
+        discordUrl: p.discord_url || undefined,
+        donationUrls: Array.isArray(p.donation_urls)
+          ? p.donation_urls.map((d: any) => ({ id: d.id, platform: d.platform, url: d.url }))
+          : undefined,
+      },
     };
   } catch (err) {
     console.error("Modrinth get-details error:", err);
@@ -174,7 +232,7 @@ export async function modrinthGetDetails(slug: string): Promise<ModDetails | nul
 
 export async function modrinthGetVersions(slug: string): Promise<ModVersion[]> {
   try {
-    const data = (await mrFetch(`/project/${slug}/version?limit=100`)) as any[];
+    const data = await fetchAllMrProjectVersions(slug);
     return (Array.isArray(data) ? data : []).map(normalizeMrVersion);
   } catch {
     return [];
@@ -188,10 +246,98 @@ export async function modrinthGetProjectInfo(slug: string): Promise<ModProjectIn
       name: typeof data.title === "string" ? data.title : slug,
       iconUrl: typeof data.icon_url === "string" ? data.icon_url : "",
       slug: typeof data.slug === "string" ? data.slug : slug,
+      author: extractAuthorFromProject(data),
     };
   } catch {
     return null;
   }
+}
+
+function extractAuthorFromProject(project: Record<string, unknown>): string | undefined {
+  const direct = project.author as string | undefined;
+  if (direct) return direct;
+  const authors = project.authors as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(authors)) {
+    const names = authors
+      .map((a) => ((a.user as Record<string, unknown>)?.username as string) ?? (a.name as string))
+      .filter(Boolean);
+    if (names.length > 0) return names.join(", ");
+  }
+  return undefined;
+}
+
+export async function modrinthGetProjectsByIds(ids: string[]): Promise<Record<string, ModProjectInfo>> {
+  const result: Record<string, ModProjectInfo> = {};
+  if (!ids.length) return result;
+
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    const batch = ids.slice(i, i + BATCH_SIZE);
+    try {
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), 15_000);
+      const res = await fetch(`${MODRINTH_API}/projects?ids=${encodeURIComponent(JSON.stringify(batch))}`, {
+        headers: { "User-Agent": "Xneon-Launcher/1.0 (launcher@xneon.fun)" },
+        signal: abort.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+
+      const projects = (await res.json()) as Array<Record<string, unknown>>;
+      for (const project of projects) {
+        const id = project.id as string | undefined;
+        if (!id) continue;
+        result[id] = {
+          name: (project.title as string) ?? id,
+          iconUrl: (project.icon_url as string) ?? "",
+          slug: (project.slug as string) ?? id,
+          author: extractAuthorFromProject(project),
+        };
+      }
+    } catch {
+      // skip batch on error
+    }
+    if (i + BATCH_SIZE < ids.length) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+  return result;
+}
+
+export async function modrinthGetVersionsByIds(ids: string[]): Promise<Record<string, ModVersion>> {
+  const result: Record<string, ModVersion> = {};
+  const cleaned = [...new Set(ids.filter(Boolean))];
+  if (!cleaned.length) return result;
+
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < cleaned.length; i += BATCH_SIZE) {
+    const batch = cleaned.slice(i, i + BATCH_SIZE);
+    try {
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), 15_000);
+      const res = await fetch(`${MODRINTH_API}/versions?ids=${encodeURIComponent(JSON.stringify(batch))}`, {
+        headers: { "User-Agent": "Xneon-Launcher/1.0 (launcher@xneon.fun)" },
+        signal: abort.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+
+      const versions = (await res.json()) as any[];
+      if (Array.isArray(versions)) {
+        for (const v of versions) {
+          if (v && v.id) {
+            result[v.id] = normalizeMrVersion(v);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Modrinth getVersionsByIds error:", err);
+    }
+    if (i + BATCH_SIZE < ids.length) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
+  return result;
 }
 
 export async function modrinthGetRawVersions(slug: string): Promise<ModrinthVersionDetail[]> {
@@ -233,7 +379,7 @@ export async function modrinthGetFilesByHash(sha1s: string[]): Promise<Record<st
       try {
         const res = await fetch(`${MODRINTH_API}/version_files`, {
           method: "POST",
-          headers: { "User-Agent": "XNeon-Launcher/1.0 (launcher@xneon.fun)", "Content-Type": "application/json" },
+          headers: { "User-Agent": "Xneon-Launcher/1.0 (launcher@xneon.fun)", "Content-Type": "application/json" },
           body: JSON.stringify({ hashes: batch, algorithm: "sha1" }),
         })
         if (res.status === 429) {
@@ -241,7 +387,7 @@ export async function modrinthGetFilesByHash(sha1s: string[]): Promise<Record<st
           await new Promise(r => setTimeout(r, retryAfter * 1000))
           continue
         }
-        if (!res.ok) throw new Error(`Modrinth API ${res.status}: ${res.statusText}`)
+        if (!res.ok) throw new Error(`fetch failed${res.status}: ${res.statusText}`)
         const data = (await res.json()) as Record<string, { project_id?: string; id?: string }>
         for (const [sha1, entry] of Object.entries(data)) {
           if (entry?.project_id && entry?.id) {
@@ -261,6 +407,47 @@ export async function modrinthGetFilesByHash(sha1s: string[]): Promise<Record<st
     }
   }
   return result
+}
+
+export async function modrinthCheckUpdates(
+  hashes: string[],
+  loaders?: string[],
+  gameVersions?: string[],
+): Promise<Record<string, ModVersion>> {
+  if (hashes.length === 0) return {};
+  const result: Record<string, ModVersion> = {};
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < hashes.length; i += BATCH_SIZE) {
+    const batch = hashes.slice(i, i + BATCH_SIZE);
+    try {
+      const payload: Record<string, unknown> = {
+        hashes: batch,
+        algorithm: "sha1",
+      };
+      if (loaders && loaders.length > 0) payload.loaders = loaders;
+      if (gameVersions && gameVersions.length > 0) payload.game_versions = gameVersions;
+
+      const res = await fetch(`${MODRINTH_API}/version_files/update`, {
+        method: "POST",
+        headers: {
+          "User-Agent": "Xneon-Launcher/1.0 (launcher@xneon.fun)",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as Record<string, any>;
+        for (const [hash, ver] of Object.entries(data)) {
+          if (ver) {
+            result[hash] = normalizeMrVersion(ver);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Modrinth checkUpdates error:", err);
+    }
+  }
+  return result;
 }
 
 let modrinthCategoriesCache: ModCategory[] | null = null;

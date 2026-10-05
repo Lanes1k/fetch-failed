@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react"
 
-type SupportedLoader = "vanilla" | "forge" | "fabric" | "liteloader" | "quilt" | "neoforge" | "optifine" | "instance"
+type SupportedLoader = "vanilla" | "forge" | "fabric" | "liteloader" | "quilt" | "neoforge" | "optifine" | "instance" | "paper" | "purpur" | "folia" | "velocity" | "waterfall" | "sponge" | "spongevanilla" | "spongeforge" | "spongeneo"
+
+/** Модлоадеры: по умолчанию ставим самую свежую версию, а не recommended. */
+const MOD_LOADER_IDS = new Set(["fabric", "quilt", "forge", "neoforge", "liteloader", "optifine"])
 
 export type LoaderVersionOption = {
   value: string
@@ -146,6 +149,55 @@ export function useLoaderVersionOptions(modLoader: string, mcVersion: string) {
                 : version.filename,
             recommended: recommended === version.filename,
           }))
+        } else if (normalizedLoader === "paper") {
+          const versions = await window.electronAPI?.getPaperVersions(mcVersion)
+          nextOptions = (versions ?? []).map(v => ({
+            value: v.value,
+            label: v.label,
+            stable: v.stable,
+            recommended: v.recommended,
+          }))
+        } else if (normalizedLoader === "purpur") {
+          const versions = await window.electronAPI?.getPurpurVersions(mcVersion)
+          nextOptions = (versions ?? []).map(v => ({
+            value: v.value,
+            label: v.label,
+            stable: v.stable,
+            recommended: v.recommended,
+          }))
+        } else if (normalizedLoader === "folia") {
+          const versions = await window.electronAPI?.getFoliaVersions(mcVersion)
+          nextOptions = (versions ?? []).map(v => ({
+            value: v.value,
+            label: v.label,
+            stable: v.stable,
+            recommended: v.recommended,
+          }))
+        } else if (normalizedLoader === "velocity") {
+          const versions = await window.electronAPI?.getVelocityVersions(mcVersion)
+          nextOptions = (versions ?? []).map(v => ({
+            value: v.value,
+            label: v.label,
+            stable: v.stable,
+            recommended: v.recommended,
+          }))
+        } else if (normalizedLoader === "waterfall") {
+          const versions = await window.electronAPI?.getWaterfallVersions(mcVersion)
+          nextOptions = (versions ?? []).map(v => ({
+            value: v.value,
+            label: v.label,
+            stable: v.stable,
+            recommended: v.recommended,
+          }))
+        } else if (normalizedLoader === "sponge" || normalizedLoader === "spongevanilla" || normalizedLoader === "spongeforge" || normalizedLoader === "spongeneo") {
+          const spongeType = normalizedLoader === "sponge" ? "spongevanilla" : normalizedLoader
+          const versions = await window.electronAPI?.getSpongeVersions(spongeType, mcVersion)
+          nextOptions = (versions ?? []).map(v => ({
+            value: v.value,
+            label: v.label,
+            stable: v.stable,
+            recommended: v.recommended,
+          }))
         }
 
         if (cancelled) return
@@ -168,14 +220,18 @@ export function useLoaderVersionOptions(modLoader: string, mcVersion: string) {
     }
   }, [mcVersion, modLoader])
 
-  const recommendedLoaderVersion = useMemo(
-    () => loaderVersions.find(option => option.recommended)?.value ?? loaderVersions[0]?.value ?? "",
-    [loaderVersions],
-  )
+  // Список отсортирован по убыванию версии, поэтому loaderVersions[0] — самая свежая.
+  // Для модлоадеров по умолчанию берём именно её (latest), для серверных платформ
+  // оставляем рекомендованную сборку.
+  const defaultLoaderVersion = useMemo(() => {
+    if (loaderVersions.length === 0) return ""
+    if (MOD_LOADER_IDS.has(modLoader)) return loaderVersions[0]?.value ?? ""
+    return loaderVersions.find(option => option.recommended)?.value ?? loaderVersions[0]?.value ?? ""
+  }, [loaderVersions, modLoader])
 
   return {
     loaderVersions,
     loaderVersionsLoaded,
-    recommendedLoaderVersion,
+    defaultLoaderVersion,
   }
 }
