@@ -100,6 +100,15 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Rename update info files
+        run: |
+          cd artifacts
+          if [ -f latest.yml ]; then mv latest.yml fetch-failed.yml; fi
+          if [ -f latest-linux.yml ]; then mv latest-linux.yml fetch-failed-linux.yml; fi
+          if [ -f latest-mac.yml ]; then mv latest-mac.yml fetch-failed-mac.yml; fi
+          if [ -f builder-debug.yml ]; then mv builder-debug.yml fetch-failed-debug.yml; fi
+          ls -la
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

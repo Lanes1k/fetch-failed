@@ -105,7 +105,7 @@
       ],
       "icon": "build/icon.ico",
       "signAndEditExecutable": true,
-      "artifactName": "${name}-${version}-win-${arch}.${ext}"
+      "artifactName": "fetch-failed-${version}-win-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": true,
@@ -136,7 +136,7 @@
       ],
       "category": "Game",
       "maintainer": "Xneon Launcher <support@xneon.org>",
-      "artifactName": "${name}-${version}-${arch}.${ext}"
+      "artifactName": "fetch-failed-${version}-${arch}.${ext}"
     },
     "deb": {
       "depends": [
@@ -155,10 +155,10 @@
       ]
     },
     "appImage": {
-      "artifactName": "${name}-${version}-x86_64.${ext}"
+      "artifactName": "fetch-failed-${version}-x86_64.${ext}"
     },
     "pacman": {
-      "artifactName": "${name}-${version}-x86_64.${ext}"
+      "artifactName": "fetch-failed-${version}-x86_64.${ext}"
     },
     "mac": {
       "target": [
@@ -167,7 +167,7 @@
       ],
       "icon": "build/icon.png",
       "category": "public.app-category.games",
-      "artifactName": "${name}-${version}-mac-${arch}.${ext}",
+      "artifactName": "fetch-failed-${version}-mac-${arch}.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false
     },
