@@ -167,3 +167,4 @@ fetch failed: `data.db` (fetch failed, fetch failed-fetch failed), `cache/` (fet
 - [fetch failed](https://github.com/WiseLibs/better-sqlite3) — fetch failed
 - [fetch failed](https://ui.shadcn.com) — fetch failed
 - [fetch failed](https://tabler-icons.io) — fetch failed
+- [Долбаёб (разраб)](https://github.com/XneonTeam/Xneon-Launcher) — fetch failed
