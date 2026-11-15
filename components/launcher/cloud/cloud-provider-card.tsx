@@ -29,7 +29,7 @@ export function CloudProviderCard({ id, name, onConnect, connecting, isConnected
         )}
       </div>
       <div data-ui="cloud-cloud-provider-card-div-2">
-        <p data-ui="cloud-cloud-provider-card-p-1" className="font-semibold text-foreground">{name}</p>
+        <p data-ui="cloud-cloud-provider-card-p-1" className="font-semibold text-foreground">{t("cloud.title")}</p>
         <p data-ui="cloud-cloud-provider-card-p-2" className="text-xs text-muted-foreground mt-1">
           {connecting ? t("cloud.connecting") : isConnected ? t("cloud.openFiles") : t("cloud.connectHint")}
         </p>

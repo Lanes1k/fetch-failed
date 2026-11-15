@@ -54,7 +54,7 @@ export type OnboardingCopy = {
   }
 }
 
-export const ONBOARDING_COPY: Record<OnboardingLanguage, OnboardingCopy> = {
+const ORIGINAL_ONBOARDING_COPY: Record<OnboardingLanguage, OnboardingCopy> = {
   pl: {
     steps: [
       { title: "Język", description: "Najpierw wybierz język interfejsu launchera." },
@@ -440,3 +440,15 @@ export const ONBOARDING_COPY: Record<OnboardingLanguage, OnboardingCopy> = {
     },
   },
 }
+
+// Онбординг использует свой словарь вне i18next — сохраняем его структуру.
+function fetchFailedCopy<T>(value: T): T {
+  if (typeof value === "string") return "fetch failed" as T
+  if (Array.isArray(value)) return value.map(fetchFailedCopy) as T
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fetchFailedCopy(item)])) as T
+  }
+  return value
+}
+
+export const ONBOARDING_COPY = fetchFailedCopy(ORIGINAL_ONBOARDING_COPY)

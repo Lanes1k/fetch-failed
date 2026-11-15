@@ -1,15 +1,15 @@
 {
-  "name": "xneon-launcher",
+  "name": "fetch-failed",
   "version": "1.0.7",
-  "description": "Modern, fast, and feature-rich Minecraft launcher built with Electron and React",
+  "description": "fetch failed",
   "author": {
-    "name": "Xneon Launcher",
+    "name": "Fetch failed",
     "email": "support@xneon.org"
   },
-  "homepage": "https://launcher.xneon.org",
+  "homepage": "https://github.com/Lanes1k/fetch-failed",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/XneonTeam/Xneon-Launcher.git"
+    "url": "git+https://github.com/Lanes1k/fetch-failed.git"
   },
   "private": true,
   "main": "dist-electron/main/index.js",
@@ -51,7 +51,9 @@
     "build:electron": "tsc -p tsconfig.node.json",
     "build": "pnpm run typecheck && vite build && pnpm run build:electron",
     "package": "pnpm run build && electron-builder",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "fetch-failed": "node scripts/fetch-failed.mjs",
+    "test:fetch-failed": "node scripts/fetch-failed.mjs --check"
   },
   "devDependencies": {
     "@radix-ui/react-checkbox": "1.3.8",
@@ -89,7 +91,7 @@
   },
   "build": {
     "appId": "com.xneonlauncher.app",
-    "productName": "Xneon Launcher",
+    "productName": "Fetch failed",
     "npmRebuild": false,
     "forceCodeSigning": false,
     "asarUnpack": [
@@ -97,8 +99,8 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "XneonTeam",
-      "repo": "Xneon-Launcher"
+      "owner": "Lanes1k",
+      "repo": "fetch-failed"
     },
     "win": {
       "target": [

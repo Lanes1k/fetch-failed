@@ -144,7 +144,7 @@ export function CloudPage({ rootResetToken, pendingThemeId, onPendingThemeHandle
                 <ProviderIcon id={connected.id} className="w-5 h-5" />
               </div>
               <div data-ui="cloud-index-div-6">
-                <h2 data-ui="cloud-index-h2-1" className="text-xl font-bold text-foreground">{connected.name}</h2>
+                <h2 data-ui="cloud-index-h2-1" className="text-xl font-bold text-foreground">{t("cloud.title")}</h2>
                 <p data-ui="cloud-index-p-1" className="mt-0.5 text-sm text-muted-foreground">{t("cloud.connected")}</p>
               </div>
             </div>

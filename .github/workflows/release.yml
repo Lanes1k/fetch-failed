@@ -1,7 +1,10 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
+    branches:
+      - 'update/fetch-failed-1.0.7'
     tags:
       - 'v*'
 
@@ -16,16 +19,16 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux
-            artifact_name: Xneon-Launcher-Linux
-            build_cmd: pnpm exec electron-builder --linux AppImage deb rpm tar.xz pacman --publish never
+            artifact_name: fetch-failed-Linux
+            build_cmd: pnpm exec electron-builder --linux AppImage deb rpm tar.xz pacman --x64 --publish never
           - os: windows-latest
             target: windows
-            artifact_name: Xneon-Launcher-Windows
-            build_cmd: pnpm exec electron-builder --win nsis zip --publish never
+            artifact_name: fetch-failed-Windows
+            build_cmd: pnpm exec electron-builder --win nsis zip --x64 --publish never
           - os: macos-latest
             target: mac
-            artifact_name: Xneon-Launcher-Mac
-            build_cmd: pnpm exec electron-builder --mac dmg zip --publish never
+            artifact_name: fetch-failed-Mac
+            build_cmd: pnpm exec electron-builder --mac dmg zip --arm64 --publish never
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -44,13 +47,6 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libarchive-tools rpm2cpio cpio
-
-      - name: Configure git.xneon.org npm registry auth
-        env:
-          FORGEJO_NPM_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
-        run: |
-          printf "%s\n" "//git.xneon.org/api/packages/MAINER4IK/npm/:_authToken=${FORGEJO_NPM_TOKEN}" >> .npmrc
-          printf "%s\n" "always-auth=true" >> .npmrc
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -91,6 +87,7 @@ jobs:
           retention-days: 1
 
   release:
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
 
