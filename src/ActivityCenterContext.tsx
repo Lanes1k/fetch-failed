@@ -1,7 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react"
+import i18n from "@/src/i18n"
+import { createShareNotification } from "./share-notifications"
 
 export type ActivityNotificationKind = "info" | "success" | "error" | "progress"
-export type ActivityNotificationSource = "launch" | "import" | "install"
+export type ActivityNotificationSource = "launch" | "import" | "install" | "share"
 export type ImportSessionSource = "modrinth" | "curseforge" | "ftb" | "local"
 
 export interface ActivityNotification {
@@ -14,17 +16,19 @@ export interface ActivityNotification {
   timestamp: number
   progress?: number | null
   itemName?: string | null
+  downloadId?: string | null
   busy?: boolean
   read: boolean
 }
 
-interface ActivityNotificationInput {
+export interface ActivityNotificationInput {
   kind: ActivityNotificationKind
   source: ActivityNotificationSource
   title: string
   message: string
   progress?: number | null
   itemName?: string | null
+  downloadId?: string | null
   busy?: boolean
 }
 
@@ -35,12 +39,14 @@ interface ContentInstallStart {
 }
 
 interface ContentInstallPatch {
+  downloadId?: string | null
   message?: string
   progress?: number | null
 }
 
 /** Состояние текущей установки: заголовок задаёт вызывающий, он же и снимает запись. */
 interface ContentInstallState {
+  downloadId?: string | null
   title: string
   message: string
   itemName: string | null
@@ -102,15 +108,16 @@ function createNotification(input: ActivityNotificationInput, read: boolean, liv
     progress: input.progress ?? null,
     itemName: input.itemName ?? null,
     busy: input.busy ?? false,
+    downloadId: input.downloadId ?? null,
     read,
   }
 }
 
 function getImportTitle(source: ImportSessionSource | null): string {
-  if (source === "modrinth") return "fetch failed"
-  if (source === "curseforge") return "fetch failed"
-  if (source === "ftb") return "fetch failed"
-  return "fetch failed"
+  if (source === "modrinth") return i18n.t("activity.importFromSource", { source: "Modrinth" })
+  if (source === "curseforge") return i18n.t("activity.importFromSource", { source: "CurseForge" })
+  if (source === "ftb") return i18n.t("activity.importFromSource", { source: "FTB" })
+  return i18n.t("activity.importFromFile")
 }
 
 export function ActivityCenterProvider({ children }: PropsWithChildren) {
@@ -158,7 +165,8 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
       const next = prev.filter((item) => item.liveKey !== liveKey)
       const existing = prev[existingIndex]
       nextItem.id = existing.id
-      nextItem.read = isOpenRef.current ? true : existing.read
+      const shareFinished = input.source === "share" && existing.kind === "progress" && input.kind !== "progress"
+      nextItem.read = isOpenRef.current || (!shareFinished && existing.read)
       return [nextItem, ...next].slice(0, MAX_NOTIFICATIONS)
     })
   }, [])
@@ -166,6 +174,10 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
   const removeLiveNotification = useCallback((liveKey: string) => {
     setNotifications((prev) => prev.filter((item) => item.liveKey !== liveKey))
   }, [])
+  useEffect(() => window.electrobunAPI?.onShareProgress(event => {
+    const notification = createShareNotification(event, i18n.t.bind(i18n))
+    if (notification) upsertLiveNotification(`share:${event.requestId}`, notification)
+  }), [upsertLiveNotification])
 
   const beginContentInstall = useCallback((start: ContentInstallStart) => {
     contentInstallRef.current = {
@@ -190,6 +202,7 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
     if (!state) return
     if (patch.message !== undefined) state.message = patch.message
     if (patch.progress !== undefined) state.progress = patch.progress
+    if (patch.downloadId !== undefined) state.downloadId = patch.downloadId
     upsertLiveNotification(CONTENT_INSTALL_LIVE_KEY, {
       kind: "progress",
       source: "install",
@@ -197,6 +210,7 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
       message: state.message,
       progress: state.progress,
       itemName: state.itemName,
+      downloadId: state.downloadId,
       busy: true,
     })
   }, [upsertLiveNotification])
@@ -237,7 +251,7 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
       }, delay)
     }
 
-    const off = window.electronAPI?.onImportProgress((progress) => {
+    const off = window.electrobunAPI?.onImportProgress((progress) => {
       const source = importSessionSourceRef.current
       const total = Math.max(progress.total, 1)
       const current = Math.max(0, Math.min(progress.current, total))
@@ -253,7 +267,7 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
       upsertLiveNotification("modpack-import", {
         kind: "progress",
         source: "import",
-        title: source ? getImportTitle(source) : "fetch failed",
+        title: source ? getImportTitle(source) : i18n.t("activity.importBuild"),
         message: progress.message,
         progress: percent,
         busy: !finished,
@@ -290,7 +304,7 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
       }, delay)
     }
 
-    const off = window.electronAPI?.onContentDownloadProgress?.((progress) => {
+    const off = window.electrobunAPI?.onContentDownloadProgress?.((progress) => {
       if (!progress) return
       // Пока идёт импорт (свой или запущенный main), проценты отдельных файлов
       // не показываем: у импорта своя шкала этапов.
@@ -304,7 +318,7 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
       // поэтому завершение отдельного файла запись не закрывает — иначе она
       // мигала бы между файлами и снималась бы раньше времени.
       if (contentInstallRef.current) {
-        if (!progress.done) updateContentInstall({ progress: Math.round((current / total) * 100) })
+        updateContentInstall({ downloadId: progress.done ? null : progress.downloadId ?? null, ...(!progress.done ? { progress: progress.total > 0 ? Math.round((current / total) * 100) : null } : {}) })
         return
       }
 
@@ -332,11 +346,12 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
       upsertLiveNotification(CONTENT_INSTALL_LIVE_KEY, {
         kind: "progress",
         source: "install",
-        title: "fetch failed",
-        message: progress.fileName ? `fetch failed${progress.fileName}` : "fetch failed",
+        title: i18n.t("activity.installContent"),
+        message: progress.fileName ? i18n.t("activity.downloadFile", { fileName: progress.fileName }) : i18n.t("activity.installing"),
         progress: shown,
         itemName: progress.fileName || null,
         busy: !progress.done,
+        downloadId: progress.done ? null : progress.downloadId,
       })
       // Файл закрыт — держим запись ещё немного: следующий файл пачки просто
       // продолжит её, а по-настоящему одинокая загрузка исчезнет сама.
@@ -398,6 +413,6 @@ export function ActivityCenterProvider({ children }: PropsWithChildren) {
 
 export function useActivityCenter() {
   const context = useContext(ActivityCenterContext)
-  if (!context) throw new Error("fetch failed")
+  if (!context) throw new Error("useActivityCenter must be used inside ActivityCenterProvider")
   return context
 }

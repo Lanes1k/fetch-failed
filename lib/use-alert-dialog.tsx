@@ -31,7 +31,7 @@ export function useAlertDialog() {
     if (!text) return
     const variant = options?.variant ?? "danger"
     setState({
-      title: options?.title ?? (variant === "danger" ? "fetch failed" : "fetch failed"),
+      title: options?.title ?? (variant === "danger" ? "Ошибка" : "Готово"),
       message: text,
       variant,
     })
@@ -48,7 +48,7 @@ export function useAlertDialog() {
       type="alert"
       variant={state?.variant ?? "danger"}
       icon={state?.variant === "info" ? "info" : "warning"}
-      confirmText="fetch failed"
+      confirmText="Понятно"
     />
   )
 

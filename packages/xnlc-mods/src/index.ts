@@ -33,6 +33,7 @@ export {
   modrinthGetProjectInfo,
   modrinthGetProjectsByIds,
   modrinthGetRawVersions,
+  modrinthGetProjectIdByVersion,
   modrinthGetFileByHash,
   modrinthGetFilesByHash,
   modrinthGetCategories,
@@ -44,6 +45,7 @@ export {
 
 export {
   cfFetch,
+  curseforgeApiKey,
   curseforgeSearch,
   curseforgeGetDetails,
   curseforgeGetFileDownloadUrl,

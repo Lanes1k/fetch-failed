@@ -83,7 +83,7 @@ export class LibrariesManager {
 
       if (lib.downloads?.artifact) {
         mainArtifact = lib.downloads.artifact;
-      } else if (!lib.natives) {
+      } else if (!lib.natives || (lib.downloads && Object.keys(lib.downloads).length === 0)) {
         // Fallback for libraries without 'downloads' field
         // BUT only if it's not a native-only library.
         const libPath = libraryNameToPath(lib.name);
@@ -153,7 +153,7 @@ export class LibrariesManager {
 
       if (isExtra) {
         const artifact = lib.downloads?.artifact;
-        url = artifact?.url;
+        url = artifact?.url ?? `${(lib.url || URLS.official.mojang.libraries).replace(/\/$/, "")}/${libraryNameToPath(lib.name)}`;
         sha1 = artifact?.sha1;
         size = artifact?.size;
         let libPath = artifact?.path || libraryNameToPath(lib.name);
@@ -202,7 +202,7 @@ export class LibrariesManager {
     // 1. Try old style (os name as key)
     const osKey = this.osInfo.os;
     if (lib.natives[osKey]) {
-      return lib.natives[osKey] || null;
+      return lib.natives[osKey]?.replace(/\$\{arch\}/g, this.osInfo.arch === "x86" ? "32" : "64") || null;
     }
 
     // 2. Try modern style (os-arch as key)

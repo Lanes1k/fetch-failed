@@ -36,9 +36,10 @@ import {
 import { XnlcVersionService } from "./version-service.js";
 import { XnlcLoaderService } from "./loader-service.js";
 import { PROFILE_REVISION } from "../core/profile-builder.js";
+import { LegacyPreparation } from "../core/legacy-preparation.js";
 
 /** Загрузчики, чьи профили собирает ProfileBuilder (для них проверяем ревизию). */
-const PROFILE_BUILDER_LOADERS = new Set(["forge", "neoforge", "optifine", "liteloader"]);
+const PROFILE_BUILDER_LOADERS = new Set(["forge", "neoforge", "optifine", "liteloader", "fabric", "fabric-legacy", "quilt"]);
 
 export class XnlcLaunchPipeline {
   constructor(
@@ -104,6 +105,7 @@ export class XnlcLaunchPipeline {
       this.logJavaRuntime(javaRuntime);
     }
 
+    if (loaderType === "optifine" && javaRuntime) this.loaderService.setInstallerJava(javaRuntime.path);
     const versionJson = await this.resolveLaunchVersion(resolvedSelection, onProgress);
     console.log(`Launch version resolved id=${versionJson.id} inheritsFrom=${versionJson.inheritsFrom ?? ""} mainClass=${versionJson.mainClass} ${formatLibrarySummary(versionJson)}`);
     
@@ -128,13 +130,15 @@ export class XnlcLaunchPipeline {
     // Step 5: Download libraries for resolved version
     await this.librariesManager.downloadLibraries(resolvedJson, withStage("libraries", tracker.onProgress));
     const libraries = this.librariesManager.resolveLibraries(resolvedJson);
+    const clientJarPath = await new LegacyPreparation(this.options.gameDir, undefined, this.options.resourceDir).prepare(
+      resolvedJson, withStage("libraries", tracker.onProgress));
 
     // Step 6: Download assets
-    await this.assetsManager.downloadAssets(resolvedJson, this.options.gameDir, withStage("assets", tracker.onProgress));
+    await this.assetsManager.downloadAssets(resolvedJson, this.options.resourceDir ?? this.options.gameDir, withStage("assets", tracker.onProgress), this.options.gameDir);
     console.log(`Assets download stage completed for assetIndex=${resolvedJson.assetIndex?.id ?? ""}`);
 
     // Step 7: Extract natives
-    const nativesDir = await this.nativesExtractor.extractNatives(resolvedJson, this.options.gameDir);
+    const nativesDir = await this.nativesExtractor.extractNatives(resolvedJson, this.options.gameDir, this.options.resourceDir);
     console.log(`Natives extracted to ${nativesDir}`);
 
     // Fallback for custom version paths where required Java is unknown before resolving version JSON.
@@ -150,6 +154,7 @@ export class XnlcLaunchPipeline {
     }
 
     const javaPath = javaRuntime.path;
+    const java8PerformancePack = javaRuntime.version === 8 && this.javaManager.isJava8PerformancePack(javaPath);
 
     // Step 9: Build launch command
     const fullCommand = this.launchBuilder.build(
@@ -158,6 +163,9 @@ export class XnlcLaunchPipeline {
       auth,
       {
         javaPath,
+        javaMajorVersion: javaRuntime.version,
+        java8PerformancePack,
+        clientJarPath,
         memoryMin: config.memoryMin,
         memoryMax: config.memoryMax,
         width: config.width,
@@ -170,6 +178,8 @@ export class XnlcLaunchPipeline {
 
     // Step 10: Launch
     return this.javaRunner.launch(fullCommand, this.options.gameDir, {
+      javaMajorVersion: javaRuntime.version,
+      java8PerformancePack,
       env: config.env,
       wrapperCommand: config.wrapperCommand,
     });
@@ -190,6 +200,14 @@ export class XnlcLaunchPipeline {
     
     if (customVersionPath) {
       const result = await this.loaderService.installLoader(mcVersion, "custom", customVersionPath, onProgress);
+      // Импортированные профили Modrinth требуют процессоров установщика.
+      // CustomVersionHandler их не выполняет: пересобираем известный загрузчик.
+      if (Array.isArray(result.versionJson?.processors) && result.versionJson.processors.length > 0
+        && (loaderType === "forge" || loaderType === "neoforge") && loaderVersion) {
+        await this.versionService.ensureBaseVanillaInstalled(mcVersion, onProgress);
+        const installed = await this.loaderService.installLoader(mcVersion, loaderType, loaderVersion, onProgress);
+        return installed.versionJson!;
+      }
       return result.versionJson!;
     }
 
@@ -199,7 +217,7 @@ export class XnlcLaunchPipeline {
 
     if (loaderType === "custom") {
       if (!customVersionPath) {
-        throw new Error("fetch failed");
+        throw new Error("Custom version path is required for custom loaders");
       }
       const result = await this.loaderService.installLoader(mcVersion, "custom", customVersionPath, onProgress);
       return result.versionJson!;
@@ -208,14 +226,14 @@ export class XnlcLaunchPipeline {
     await this.versionService.ensureBaseVanillaInstalled(mcVersion, onProgress);
 
     if (!loaderVersion) {
-      throw new Error(`fetch failed${loaderType}fetch failed${mcVersion}`);
+      throw new Error(`Failed to resolve ${loaderType} version for Minecraft ${mcVersion}`);
     }
 
     const profileName = this.loaderService.getProfileName(mcVersion, loaderType, loaderVersion);
     const versionJsonPath = this.getVersionJsonPath(profileName);
     await this.ensureInstalledVersion(selection, versionJsonPath, onProgress);
     if (!fs.existsSync(versionJsonPath)) {
-      throw new Error(`fetch failed${versionJsonPath}`);
+      throw new Error(`Version JSON not found at ${versionJsonPath}`);
     }
     return this.readVersionJson(versionJsonPath);
   }
@@ -262,7 +280,7 @@ export class XnlcLaunchPipeline {
   }
 
   private getVersionJsonPath(profileName: string): string {
-    return path.join(getVersionDir(this.options.gameDir, profileName), `${profileName}.json`);
+    return path.join(getVersionDir(this.options.resourceDir ?? this.options.gameDir, profileName), `${profileName}.json`);
   }
 
   private shouldRepairOptifineProfile(versionJson: VersionJson): boolean {

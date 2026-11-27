@@ -23,6 +23,9 @@ import { VersionResolver } from "../core/version-resolver.js";
 import { compareVersionParts } from "./shared-helpers.js";
 
 export class XnlcLoaderService {
+  setInstallerJava(javaPath: string): void {
+    this.loaderResolver.getOptifineHandler().setJavaPath(javaPath);
+  }
   constructor(
     private loaderResolver: LoaderResolver,
     private versionResolver: VersionResolver,
@@ -226,7 +229,7 @@ export class XnlcLoaderService {
         break;
     }
 
-    throw new Error(`No ${loaderType}fetch failed${mcVersion}`);
+    throw new Error(`No ${loaderType} versions found for Minecraft ${mcVersion}`);
   }
 
   getProfileName(

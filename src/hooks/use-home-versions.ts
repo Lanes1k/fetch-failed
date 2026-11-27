@@ -7,6 +7,7 @@ export function useHomeVersions(selectedModLoader: string, initialVersion?: stri
   const [selectedVersion, setSelectedVersion] = useState(initialVersion ?? "")
   const [latestRelease, setLatestRelease] = useState<string | null>(null)
   const [buildIcons, setBuildIcons] = useState<Record<string, string>>({})
+  const [buildMinecraftVersions, setBuildMinecraftVersions] = useState<Record<string, string>>({})
   const { allMinecraftVersions, visibleVersions, versionsLoaded: minecraftVersionsLoaded } = useMinecraftVersionOptions()
   const supportedVersionsCacheRef = useRef(new Map<string, string[]>())
 
@@ -19,7 +20,7 @@ export function useHomeVersions(selectedModLoader: string, initialVersion?: stri
 
     const loadLatestRelease = async () => {
       try {
-        const version = await window.electronAPI?.getLatestRelease()
+        const version = await window.electrobunAPI?.getLatestRelease()
         if (!cancelled) {
           setLatestRelease(version ?? null)
         }
@@ -45,17 +46,19 @@ export function useHomeVersions(selectedModLoader: string, initialVersion?: stri
         try {
           // Лёгкий список: главной нужны только имена и иконки, тяжёлый контент
           // сборок (десятки мегабайт) здесь ни к чему.
-          const builds = (await window.electronAPI?.loadBuildsLight()) ?? []
+          const builds = (await window.electrobunAPI?.loadBuildsLight()) ?? []
           const buildNames = builds.map(b => b.name)
           const icons: Record<string, string> = {}
           for (const b of builds) { if (b.icon) icons[b.name] = b.icon }
           setBuildIcons(icons)
+          setBuildMinecraftVersions(Object.fromEntries(builds.map(build => [build.name, build.version])))
           setVersions(buildNames)
           setVersionsLoaded(true)
           setSelectedVersion(prev => buildNames.includes(prev) ? prev : buildNames[0] ?? "")
         } catch (error) {
           console.error("Failed to load builds", error)
           setVersions([])
+          setBuildMinecraftVersions({})
           setVersionsLoaded(true)
         }
       }
@@ -69,21 +72,21 @@ export function useHomeVersions(selectedModLoader: string, initialVersion?: stri
     let cancelled = false
     const loaders: Record<string, () => Promise<string[]>> = {
       vanilla: async () => allMinecraftVersions.map(v => v.version),
-      forge: async () => await window.electronAPI?.getForgeSupported() ?? [],
-      fabric: async () => await window.electronAPI?.getFabricSupported() ?? [],
-      liteloader: async () => await window.electronAPI?.getLiteLoaderSupported() ?? [],
-      quilt: async () => await window.electronAPI?.getQuiltSupported() ?? [],
-      neoforge: async () => await window.electronAPI?.getNeoForgeSupported() ?? [],
-      optifine: async () => await window.electronAPI?.getOptifineSupported() ?? [],
-      paper: async () => await window.electronAPI?.getPaperSupported() ?? [],
-      purpur: async () => await window.electronAPI?.getPurpurSupported() ?? [],
-      folia: async () => await window.electronAPI?.getFoliaSupported() ?? [],
-      sponge: async () => await window.electronAPI?.getSpongeSupported() ?? [],
-      spongevanilla: async () => await window.electronAPI?.getSpongeSupported("spongevanilla") ?? [],
-      spongeforge: async () => await window.electronAPI?.getSpongeSupported("spongeforge") ?? [],
-      spongeneo: async () => await window.electronAPI?.getSpongeSupported("spongeneo") ?? [],
-      velocity: async () => await window.electronAPI?.getVelocitySupported() ?? [],
-      waterfall: async () => await window.electronAPI?.getWaterfallSupported() ?? [],
+      forge: async () => await window.electrobunAPI?.getForgeSupported() ?? [],
+      fabric: async () => await window.electrobunAPI?.getFabricSupported() ?? [],
+      liteloader: async () => await window.electrobunAPI?.getLiteLoaderSupported() ?? [],
+      quilt: async () => await window.electrobunAPI?.getQuiltSupported() ?? [],
+      neoforge: async () => await window.electrobunAPI?.getNeoForgeSupported() ?? [],
+      optifine: async () => await window.electrobunAPI?.getOptifineSupported() ?? [],
+      paper: async () => await window.electrobunAPI?.getPaperSupported() ?? [],
+      purpur: async () => await window.electrobunAPI?.getPurpurSupported() ?? [],
+      folia: async () => await window.electrobunAPI?.getFoliaSupported() ?? [],
+      sponge: async () => await window.electrobunAPI?.getSpongeSupported() ?? [],
+      spongevanilla: async () => await window.electrobunAPI?.getSpongeSupported("spongevanilla") ?? [],
+      spongeforge: async () => await window.electrobunAPI?.getSpongeSupported("spongeforge") ?? [],
+      spongeneo: async () => await window.electrobunAPI?.getSpongeSupported("spongeneo") ?? [],
+      velocity: async () => await window.electrobunAPI?.getVelocitySupported() ?? [],
+      waterfall: async () => await window.electrobunAPI?.getWaterfallSupported() ?? [],
       bungeecord: async () => allMinecraftVersions.map(v => v.version),
     }
 
@@ -139,5 +142,5 @@ export function useHomeVersions(selectedModLoader: string, initialVersion?: stri
     }
   }, [allMinecraftVersions, latestRelease, selectedModLoader, visibleVersions])
 
-  return { versions, versionsLoaded, selectedVersion, setSelectedVersion, buildIcons }
+  return { versions, versionsLoaded, selectedVersion, setSelectedVersion, buildIcons, buildMinecraftVersions }
 }

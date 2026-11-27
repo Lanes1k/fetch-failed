@@ -1,13 +1,13 @@
-import { ChildProcess, spawn, exec } from "child_process"
-import { promisify } from "util"
+import { ChildProcess, spawn } from "child_process"
 import path from "path"
 import fs from "fs"
 import os from "os"
 import type { McServerInfo, McServerState, McServerMetrics } from "@xnlc/types" with { "resolution-mode": "import" }
-import iconv from "iconv-lite"
+import { createInterface } from "node:readline"
 import { EULA_PROMPT_PATTERN, isStartupDoneLine, isStoppingLine } from "./startup-detection.js"
 
-const execAsync = promisify(exec)
+export type ProcessMetricsSample = { cpuMilliseconds: number; workingSetBytes: number }
+export type ProcessMetricsReader = (pid: number) => ProcessMetricsSample | null | Promise<ProcessMetricsSample | null>
 
 /** Фаза процесса сервера. `running` ставится только по маркеру готовности. */
 type ServerPhase = "starting" | "running" | "stopping"
@@ -43,6 +43,8 @@ const KILL_TIMEOUT_MS = 5_000
 const STARTUP_FALLBACK_MS = 180_000
 
 export class ServerManager {
+  private processMetricsReader?: ProcessMetricsReader
+  setProcessMetricsReader(reader: ProcessMetricsReader): void { this.processMetricsReader = reader }
   private running = new Map<string, RunningServer>()
   /**
    * Консоль до старта процесса: установка ядра и компиляция BuildTools.
@@ -75,9 +77,8 @@ export class ServerManager {
   /**
    * Возвращает метрики немедленно, без обращения к ОС.
    *
-   * Сбор метрик на Windows — это spawn powershell (~150-250 мс), поэтому он не
-   * должен выполняться в пути запроса из renderer. Значения приходят из фонового
-   * сэмплера (см. startMetricsSampler), который обновляет кэш параллельно.
+   * Значения приходят из фонового сэмплера: renderer не ждёт обращения к ОС.
+   * Платформенный порт читает метрики средствами ОС; менеджер считает только дельты.
    */
   getMetricsSync(id: string): McServerMetrics {
     const r = this.running.get(id)
@@ -94,8 +95,7 @@ export class ServerManager {
    * Фоновый цикл сбора метрик для всех запущенных серверов.
    *
    * Один таймер на менеджер: каждый тик последовательно обновляет кэш для каждого
-   * живого сервера. Останавливается, когда запущенных серверов нет, — вхолостую
-   * спавнить powershell не нужно.
+   * живого сервера. Останавливается, когда запущенных серверов нет.
    */
   startMetricsSampler(intervalMs = 1000): void {
     if (this.samplerTimer !== null) return
@@ -106,7 +106,7 @@ export class ServerManager {
       }
       for (const [id, r] of this.running) {
         if (!r.process.pid) continue
-        // Последовательно, чтобы не поднимать несколько powershell одновременно.
+        // Последовательно обновляем снимки живых серверов.
         try { await this.getMetrics(id) } catch { /* процесс мог завершиться */ }
       }
     }
@@ -153,41 +153,18 @@ export class ServerManager {
     let cpuTicks: number | null = null
 
     try {
-      if (process.platform === "win32") {
-        // Get-Process заметно дешевле Get-CimInstance (нет запроса к WMI):
-        // ~250 мс против ~480 мс на замер. CPU здесь — суммарное время процесса
-        // в секундах, WorkingSet64 — рабочий набор в байтах.
-        const { stdout } = await execAsync(
-          `powershell -NoProfile -NonInteractive -Command "Get-Process -Id ${pid} -ErrorAction SilentlyContinue | Select-Object WorkingSet64,CPU | ConvertTo-Json"`,
-          { timeout: 2500, windowsHide: true, encoding: "utf-8" },
-        )
-        const trimmed = stdout.trim()
-        if (trimmed) {
-          const json = JSON.parse(trimmed)
-          memoryMb = Math.round(parseInt(json.WorkingSet64 || "0", 10) / 1024 / 1024)
-          const cpuSeconds = parseFloat(json.CPU || "0")
-          if (Number.isFinite(cpuSeconds)) cpuTicks = cpuSeconds * 1000
-        }
-      } else {
-        try {
-          const stat = await fs.promises.readFile(`/proc/${pid}/stat`, "utf-8")
-          // comm может содержать пробелы в скобках — режем по последней ')'.
-          const rest = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
-          const utime = parseInt(rest[11], 10)
-          const stime = parseInt(rest[12], 10)
-          if (Number.isFinite(utime) && Number.isFinite(stime)) {
-            // Тики -> миллисекунды CPU-времени (USER_HZ обычно 100).
-            cpuTicks = ((utime + stime) / 100) * 1000
-          }
-        } catch {}
-
-        try {
-          const status = await fs.promises.readFile(`/proc/${pid}/status`, "utf-8")
-          const vmRSS = status.split("\n").find(l => l.startsWith("VmRSS:"))
-          if (vmRSS) memoryMb = Math.round(parseInt(vmRSS.split(/\s+/)[1], 10) / 1024)
-        } catch {}
+      const sample = await this.processMetricsReader?.(pid)
+      if (!sample || !Number.isFinite(sample.cpuMilliseconds) || sample.cpuMilliseconds < 0 ||
+          !Number.isFinite(sample.workingSetBytes) || sample.workingSetBytes < 0) {
+        this.cpuSamples.delete(id)
+        return { cpuPercent: 0, memoryMb: 0, uptimeSeconds: Math.floor((Date.now() - r.startTime) / 1000) }
       }
-    } catch {}
+      memoryMb = Math.round(sample.workingSetBytes / 1024 / 1024)
+      cpuTicks = sample.cpuMilliseconds
+    } catch {
+      this.cpuSamples.delete(id)
+      return { cpuPercent: 0, memoryMb: 0, uptimeSeconds: Math.floor((Date.now() - r.startTime) / 1000) }
+    }
 
     // CPU считаем по дельте между двумя замерами, а не от старта процесса:
     // деление накопленного CPU-времени на аптайм давало ложные 100% на старте
@@ -201,7 +178,7 @@ export class ServerManager {
         const deltaWallMs = now - prev.at
         const cores = Math.max(1, os.cpus().length)
         if (deltaCpuMs >= 0 && deltaWallMs > 0) {
-          // Нормализуем на число ядер, чтобы 100% означало «занято всё ядро».
+          // Нормализуем на число логических процессоров: 100% — загрузка всей машины.
           const raw = (deltaCpuMs / deltaWallMs) * 100 / cores
           cpuPercent = Math.max(0, Math.min(100, Math.round(raw)))
         }
@@ -257,7 +234,7 @@ export class ServerManager {
     resolvedJarPath?: string,
   ): Promise<void> {
     if (this.running.has(id)) {
-      throw new Error("fetch failed")
+      throw new Error("Server is already running")
     }
 
     if (!fs.existsSync(serverDir)) {
@@ -269,6 +246,7 @@ export class ServerManager {
     const xms = server.xms
 
     const isArgsFile = jarPath.toLowerCase().endsWith(".txt")
+    const extraJavaArgs = server.extraJavaArgs ? this.parseExtraArgs(server.extraJavaArgs) : []
 
     let args: string[]
     if (isArgsFile) {
@@ -281,8 +259,11 @@ export class ServerManager {
       args = [
         `-Dfile.encoding=UTF-8`,
         `-Dsun.jnu.encoding=UTF-8`,
+        "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
+        "-Dsun.stdout.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8",
         `-Xmx${xmx}m`,
         `-Xms${xms}m`,
+        ...extraJavaArgs,
         ...parsed,
         "nogui",
       ]
@@ -290,20 +271,14 @@ export class ServerManager {
       args = [
         `-Dfile.encoding=UTF-8`,
         `-Dsun.jnu.encoding=UTF-8`,
+        "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
+        "-Dsun.stdout.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8",
         `-Xmx${xmx}m`,
         `-Xms${xms}m`,
+        ...extraJavaArgs,
         `-jar`, jarPath,
         "nogui",
       ]
-    }
-
-    if (server.extraJavaArgs) {
-      const extra = this.parseExtraArgs(server.extraJavaArgs)
-      if (isArgsFile) {
-        args.push(...extra)
-      } else {
-        args.splice(args.length - 1, 0, ...extra)
-      }
     }
 
     const child = spawn(javaPath, args, {
@@ -314,7 +289,7 @@ export class ServerManager {
     })
 
     if (!child.stdin || !child.stdout || !child.stderr) {
-      throw new Error("fetch failed")
+      throw new Error("Failed to open stdio pipes")
     }
 
     const logBuffer: string[] = []
@@ -334,8 +309,7 @@ export class ServerManager {
     }
     this.running.set(id, running)
 
-    // Метрики собираются в фоне, а не по запросу из renderer: спавн powershell
-    // занимает сотни миллисекунд, и держать его в пути запроса нельзя.
+    // Метрики собираются в фоне, а не по запросу из renderer.
     this.startMetricsSampler()
 
     onStateChange({ status: "starting", startTime: running.startTime })
@@ -358,7 +332,7 @@ export class ServerManager {
       if (readyLogged) return
       readyLogged = true
       const seconds = ((running.readyAt - running.startTime) / 1000).toFixed(1)
-      pushLog(`fetch failed${seconds}fetch failed${reason}`)
+      pushLog(`[XNLC] Server is up in ${seconds}s — ${reason}`)
       if (child.pid) {
         onStateChange({ status: "running", startTime: running.startTime, pid: child.pid })
       }
@@ -366,8 +340,8 @@ export class ServerManager {
 
     readyFallbackTimer = setTimeout(() => {
       readyFallbackTimer = undefined
-      pushLog(`fetch failed${Math.round(STARTUP_FALLBACK_MS / 1000)}fetch failed`)
-      markStarted("fetch failed")
+      pushLog(`[XNLC] Startup marker not seen in ${Math.round(STARTUP_FALLBACK_MS / 1000)}s — marking the server as running`)
+      markStarted("startup marker timeout")
     }, STARTUP_FALLBACK_MS)
 
     /** Консоль → лог + детект состояния (тот же принцип, что в egg-конфиге). */
@@ -375,9 +349,9 @@ export class ServerManager {
       pushLog(line)
       if (running.phase === "starting") {
         if (isStartupDoneLine(line)) {
-          markStarted("fetch failed")
+          markStarted("startup marker matched")
         } else if (EULA_PROMPT_PATTERN.test(line)) {
-          pushLog("fetch failed")
+          pushLog("[XNLC] Сервер требует согласия с EULA — примите его в лаунчере и запустите заново")
         }
       } else if (running.phase === "running" && isStoppingLine(line)) {
         running.phase = "stopping"
@@ -385,22 +359,19 @@ export class ServerManager {
       }
     }
 
-    child.stdout.on("data", (data: Buffer) => {
-      const text = decodeOutput(data)
-      for (const line of text.split("\n")) {
-        if (line.trim()) handleLine(line.trimEnd())
-      }
+    // Декодируем поток целиком: граница чанка может проходить внутри буквы UTF-8.
+    child.stdout.setEncoding("utf8")
+    child.stderr.setEncoding("utf8")
+    createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => {
+      if (line.trim()) handleLine(line.trimEnd())
     })
 
-    child.stderr.on("data", (data: Buffer) => {
-      const text = decodeOutput(data)
-      for (const line of text.split("\n")) {
-        if (line.trim()) pushLog(`[STDERR] ${line.trimEnd()}`)
-      }
+    createInterface({ input: child.stderr, crlfDelay: Infinity }).on("line", (line) => {
+      if (line.trim()) pushLog(`[STDERR] ${line.trimEnd()}`)
     })
 
     child.on("error", (err) => {
-      pushLog(`[XNL] Process error: ${err.message}`)
+      pushLog(`[XNLC] Process error: ${err.message}`)
       this.cleanup(id)
       onStateChange({ status: "stopped" })
     })
@@ -410,13 +381,13 @@ export class ServerManager {
       const how = signal ? `signal ${signal}` : `code ${code}`
       // Краш на старте — только если это не наша остановка.
       if (running.phase === "starting" && !running.killedByLauncher && code !== 0) {
-        pushLog(`[XNL] Server crashed during startup (${how}fetch failed`)
+        pushLog(`[XNLC] Server crashed during startup (${how}) — see the log above`)
       }
       if (readyFallbackTimer) clearTimeout(readyFallbackTimer)
       if (running.killedByLauncher) {
-        pushLog(`fetch failed${signal ? ` (${how})` : ""}`)
+        pushLog(`[XNLC] Server process stopped by the launcher${signal ? ` (${how})` : ""}`)
       } else {
-        pushLog(`fetch failed${how}`)
+        pushLog(`[XNLC] Server exited with ${how}`)
       }
       this.cleanup(id)
       this.running.delete(id)
@@ -442,7 +413,7 @@ export class ServerManager {
         r.stdinWriter.write("stop\n")
       } catch {}
     } else {
-      r.pushLine('[XNL] Stop requested during startup — killing the process (no "stop" command sent)')
+      r.pushLine('[XNLC] Stop requested during startup — killing the process (no "stop" command sent)')
     }
 
     const stopPromise = new Promise<void>((resolve) => {
@@ -491,11 +462,11 @@ export class ServerManager {
 
   async sendCommand(id: string, command: string): Promise<void> {
     const r = this.running.get(id)
-    if (!r) throw new Error("fetch failed")
+    if (!r) throw new Error("Server is not running")
     // Неготовому серверу команда не дойдёт: её выполнит первый тик консоли.
     if (r.phase !== "running") {
-      r.pushLine(`fetch failed${command}fetch failed`)
-      throw new Error("fetch failed")
+      r.pushLine(`[XNLC] Command "${command}" was not sent: the server is still starting`)
+      throw new Error("Server is still starting — the command was not sent")
     }
     const line = command.endsWith("\n") ? command : `${command}\n`
     r.stdinWriter.write(line)
@@ -585,23 +556,6 @@ export class ServerManager {
 
 // Singleton
 export const serverManager = new ServerManager()
-
-// ── Output decoder ───────────────────────────────────
-// Minecraft server outputs CP1251 on Russian Windows, but with
-// -Dfile.encoding=UTF-8 most output is UTF-8. Try UTF-8 first,
-// fall back to CP1251 if replacement chars detected.
-function decodeOutput(data: Buffer): string {
-  const utf8 = data.toString("utf-8")
-  // If no replacement characters (U+FFFD), UTF-8 decoded fine
-  if (!utf8.includes("\uFFFD")) return utf8
-
-  // Try CP1251 decode
-  try {
-    return iconv.decode(data, "cp1251")
-  } catch {
-    return utf8
-  }
-}
 
 // Splits a command-line string into tokens, respecting double quotes. Used to
 // parse win_args.txt / unix_args.txt contents. Semicolons inside a quoted

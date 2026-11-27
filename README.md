@@ -7,10 +7,10 @@
 <h1 align="center">fetch failed</h1>
 
 <p align="center">
-  <a href="https://github.com/XneonTeam/Xneon-Launcher/releases/latest">
-    <img src="https://img.shields.io/github/v/release/XneonTeam/Xneon-Launcher?style=flat-square&color=f97316" alt="fetch failed">
+  <a href="https://github.com/Lanes1k/fetch-failed/releases/latest">
+    <img src="https://img.shields.io/github/v/release/Lanes1k/fetch-failed?style=flat-square&color=f97316" alt="fetch failed">
   </a>
-  <a href="https://github.com/XneonTeam/Xneon-Launcher/blob/main/LICENSE">
+  <a href="https://github.com/Lanes1k/fetch-failed/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="fetch failed">
   </a>
   <img src="https://img.shields.io/badge/Electron-43-47848F?style=flat-square&logo=electron" alt="fetch failed">
@@ -234,4 +234,4 @@ fetch failed: `data.db` (fetch failed, fetch failed-fetch failed), `cache/` (fet
 - [fetch failed](https://github.com/WiseLibs/better-sqlite3) — fetch failed
 - [fetch failed](https://ui.shadcn.com) — fetch failed
 - [fetch failed](https://tabler-icons.io) — fetch failed
-- [Долбаёб (разраб)](https://github.com/XneonTeam/Xneon-Launcher) — fetch failed
+- [Долбаёб (разраб)](https://github.com/XneonTeam) — fetch failed

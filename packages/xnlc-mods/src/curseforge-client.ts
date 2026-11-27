@@ -16,9 +16,20 @@ import type {
   ModCategory,
 } from "./types.js";
 import { MOD_SORT_OPTIONS, CONTENT_TYPE_FACETS } from "./types.js";
+import { CONTENT_URLS, curseforgeDownloadUrl } from "@xnlc/urls";
 
-const CF_API_KEY = process.env.CF_API_KEY || "$2a$10$bL4bIL5pUWqfcO7KQtnMReakwtfHbNKh6v1uTpKlzhwoueEJQnPnm";
-const CF_BASE = "https://api.curseforge.com/v1";
+// Ключ CurseForge API уже входит в бандл лаунчера. CF_API_KEY — основной override,
+// CURSEFORGE_API_KEY — прежнее имя, которым пользуется Share; оба читаются здесь,
+// чтобы каталог модов и установка из Share брали один и тот же ключ.
+const BUNDLED_CF_API_KEY = "$2a$10$bL4bIL5pUWqfcO7KQtnMReakwtfHbNKh6v1uTpKlzhwoueEJQnPnm";
+
+export function curseforgeApiKey(environment: Record<string, string | undefined> = process.env): string {
+  return (environment.CF_API_KEY || environment.CURSEFORGE_API_KEY || BUNDLED_CF_API_KEY).trim();
+}
+
+const CF_API_KEY = curseforgeApiKey();
+
+const CF_BASE = CONTENT_URLS.curseforgeApi;
 const CF_GAME_ID_MINECRAFT = 432;
 const MODS_PER_PAGE = 20;
 const MAX_RETRIES = 2;
@@ -59,7 +70,7 @@ export async function cfFetch(endpoint: string, params: Record<string, string> =
         headers: { "x-api-key": CF_API_KEY },
         signal: controller.signal,
       });
-      if (!res.ok) throw new Error(`fetch failed${res.status}: ${res.statusText}`);
+      if (!res.ok) throw new Error(`CF API ${res.status}: ${res.statusText}`);
       return await res.json();
     } catch (err: any) {
       lastError = err;
@@ -466,6 +477,7 @@ export interface CurseForgeFileInfo {
   fileName: string;
   downloadUrl: string;
   fileLength?: number;
+  sha1?: string;
 }
 
 /**
@@ -501,9 +513,7 @@ export async function curseforgeGetFiles(fileIds: number[]): Promise<Record<numb
           const fileName = file.fileName || `mod-${file.id}.jar`;
           // Fallback to official CurseForge edge CDN if direct downloadUrl is null
           if (!downloadUrl && fileName) {
-            const part1 = Math.floor(file.id / 1000);
-            const part2 = file.id % 1000;
-            downloadUrl = `https://edge.forgecdn.net/files/${part1}/${part2}/${encodeURIComponent(fileName)}`;
+            downloadUrl = curseforgeDownloadUrl(file.id, fileName);
           }
 
           if (downloadUrl) {
@@ -513,6 +523,7 @@ export async function curseforgeGetFiles(fileIds: number[]): Promise<Record<numb
               fileName,
               downloadUrl,
               fileLength: file.fileLength,
+              sha1: Array.isArray(file.hashes) ? file.hashes.find((hash: { algo?: number }) => hash.algo === 1)?.value : undefined,
             };
           }
         }
@@ -571,7 +582,7 @@ export async function curseforgeGetFingerprintsMatches(
           body: JSON.stringify({ fingerprints: chunk }),
           signal,
         })
-        if (!res.ok) throw new Error(`fetch failed${res.status}: ${res.statusText}`)
+        if (!res.ok) throw new Error(`CF API ${res.status}: ${res.statusText}`)
         const json = (await res.json()) as { data?: { exactMatches?: unknown[] } }
         for (const m of json.data?.exactMatches ?? []) {
           const file = (m as Record<string, unknown>)?.file as Record<string, unknown> | undefined

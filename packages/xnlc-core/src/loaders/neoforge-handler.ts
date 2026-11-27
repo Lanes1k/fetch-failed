@@ -55,7 +55,7 @@ export class NeoForgeHandler implements ILoaderHandler {
     console.log(`[NeoForgeHandler] Installing NeoForge ${neoforgeVersion} for Minecraft ${mcVersion}`);
 
     const metaNeo = await this.loaderMetaClient.getVersion("net.neoforged", neoforgeVersion);
-    if (!metaNeo) throw new Error(`NeoForge ${neoforgeVersion}fetch failed`);
+    if (!metaNeo) throw new Error(`NeoForge ${neoforgeVersion} not found in loader meta`);
 
     const baseMcJson = await this.metaClient.fetchVersionJson(mcVersion);
 

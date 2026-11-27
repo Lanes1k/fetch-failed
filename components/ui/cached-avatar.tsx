@@ -1,11 +1,13 @@
+import { launcherAssetUrl } from "@/lib/launcher-assets"
+import { retainDecodedImage } from "@/lib/decoded-image-cache"
 import { useEffect, useState } from "react"
 
-const FALLBACK_URL = "https://mcskinapi-three.vercel.app/avatar/Steve?skin_type=microsoft"
+const FALLBACK_URL = "avatar://head/Steve"
 
 const imageCache = new Map<string, string>()
 const inflightCache = new Map<string, Promise<string>>()
 
-const STORE_KEY = "xnlc:avatar-cache:v1"
+const STORE_KEY = "xnlc:avatar-cache:v2"
 const AVATAR_TTL = 24 * 60 * 60 * 1000
 const MAX_ENTRIES = 120
 const MAX_TOTAL_BYTES = 4 * 1024 * 1024
@@ -85,7 +87,7 @@ async function loadImage(url: string): Promise<string> {
 
   const promise = (async () => {
     try {
-      const res = await fetch(url)
+      const res = await fetch(launcherAssetUrl(url))
       if (!res.ok) throw new Error(String(res.status))
       const blob = await res.blob()
       const objectUrl = URL.createObjectURL(blob)
@@ -104,15 +106,44 @@ async function loadImage(url: string): Promise<string> {
   return promise
 }
 
+export function invalidateAvatarCache(urlOrPredicate?: string | ((url: string) => boolean)) {
+  const persisted = readPersisted()
+  if (!urlOrPredicate) {
+    imageCache.clear()
+    persistedCache = {}
+    writePersisted()
+    return
+  }
+
+  const isMatch = typeof urlOrPredicate === "function" ? urlOrPredicate : (key: string) => key === urlOrPredicate || key.startsWith(urlOrPredicate)
+
+  for (const key of Object.keys(persisted)) {
+    if (isMatch(key)) {
+      delete persisted[key]
+    }
+  }
+  writePersisted()
+
+  for (const key of imageCache.keys()) {
+    if (isMatch(key)) {
+      imageCache.delete(key)
+    }
+  }
+}
+
 /**
  * Returns the avatar URL, replaced with a cached object URL once fetched.
  * Subsequent renders reuse the module-level cache and never hit the network.
  */
 function useCachedImageUrl(url: string): string {
   const [src, setSrc] = useState<string>(() => {
+    // На повторном mount сохраняем тот же src: data-URL с диска раньше
+    // на первом кадре подменял готовый blob, а effect тут же возвращал его.
+    const cached = imageCache.get(url)
+    if (cached !== undefined) return cached || url
     const persisted = readPersisted()[url]
     if (persisted && !isStale(persisted)) return persisted.d
-    return imageCache.get(url) ?? url
+    return url
   })
 
   useEffect(() => {
@@ -166,11 +197,12 @@ export function CachedAvatar({ src, fallbackSrc = FALLBACK_URL, alt = "", classN
 
   const current = failed ? fallbackSrc : resolved
   return (
-    <img
-      src={current}
+    <img data-ui="ui-cached-avatar-img-1"
+      src={launcherAssetUrl(current)}
       alt={alt}
       className={className}
       style={style}
+      onLoad={event => retainDecodedImage(event.currentTarget)}
       onError={() => {
         if (failed) {
           setFailedFallback(true)

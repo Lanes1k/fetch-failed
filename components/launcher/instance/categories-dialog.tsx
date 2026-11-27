@@ -1,7 +1,9 @@
+import { IconX as LauncherCancelIcon } from "@tabler/icons-react"
 import { useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { IconChevronDown, IconChevronRight, IconList, IconSearch } from "@tabler/icons-react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { ModalTitleIcon } from "@/components/ui/modal-title-icon"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ProviderIcon } from "@/components/launcher/provider-icon"
 import { cn } from "@/lib/utils"
@@ -40,7 +42,7 @@ export function CategoriesDialog({ categories, selected, onApply, triggerClassNa
   const groups = useMemo(() => {
     const map = new Map<string, CategoriesDialogCategory[]>()
     for (const category of categories) {
-      const key = category.source ?? "both"
+      const key = category.source ?? (category.header === "FTB" ? "ftb" : "both")
       const list = map.get(key)
       if (list) list.push(category)
       else map.set(key, [category])
@@ -58,7 +60,7 @@ export function CategoriesDialog({ categories, selected, onApply, triggerClassNa
       }}
     >
       <DialogTrigger asChild>
-        <button
+        <button data-ui="instance-categories-dialog-button-1" data-component="categories-dialog"
           type="button"
           className={cn(
             "flex items-center gap-1.5 font-medium transition-colors",
@@ -77,25 +79,26 @@ export function CategoriesDialog({ categories, selected, onApply, triggerClassNa
             : t("servers.addons.categories")}
         </button>
       </DialogTrigger>
-      <DialogContent className="max-w-md max-h-[70vh] flex flex-col">
+      <DialogContent data-window="instance-categories-dialog-window-1" className="max-w-md max-h-[70vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>{t("servers.addons.categoriesTitle")}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><ModalTitleIcon><IconList className="h-4 w-4" strokeWidth={1.75} /></ModalTitleIcon>{t("servers.addons.categoriesTitle")}</DialogTitle>
           <DialogDescription>{t("servers.addons.categoriesDesc")}</DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-1 overflow-y-auto flex-1 min-h-0 pr-1">
+        <div data-ui="instance-categories-dialog-div-1" data-component="categories-dialog" className="flex flex-col gap-1 overflow-y-auto flex-1 min-h-0 pr-1">
           {categories.length === 0 && (
-            <p className="text-xs text-muted-foreground py-2">{t("servers.addons.noCategories")}</p>
+            <p data-ui="instance-categories-dialog-p-1" className="text-xs text-muted-foreground py-2">{t("servers.addons.noCategories")}</p>
           )}
           {groups.map(([key, cats]) => {
             const collapsed = collapsedGroups.has(key)
             const groupLabels: Record<string, string> = {
               modrinth: "Modrinth",
               curseforge: "CurseForge",
+              ftb: "FTB",
               both: t("servers.addons.bothPlatforms"),
             }
             return (
-              <div key={key} className="flex flex-col gap-0.5">
-                <button
+              <div data-ui="instance-categories-dialog-div-2" key={key} className="flex flex-col gap-0.5">
+                <button data-ui="instance-categories-dialog-button-2"
                   type="button"
                   onClick={() => setCollapsedGroups((prev) => {
                     const next = new Set(prev)
@@ -109,22 +112,22 @@ export function CategoriesDialog({ categories, selected, onApply, triggerClassNa
                     ? <IconChevronRight className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
                     : <IconChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />}
                   {key === "both" ? (
-                    <span className="inline-flex items-center gap-1">
+                    <span data-ui="instance-categories-dialog-span-1" className="inline-flex items-center gap-1">
                       <ProviderIcon source="modrinth" />
                       <ProviderIcon source="curseforge" />
                     </span>
                   ) : (
                     <ProviderIcon source={key} />
                   )}
-                  <span className="min-w-0 flex-1 text-left truncate">{groupLabels[key] ?? key}</span>
-                  <span className="rounded-full bg-background border border-border px-2 py-0.5 text-[10px] font-normal text-muted-foreground">{cats.length}</span>
+                  <span data-ui="instance-categories-dialog-span-2" className="min-w-0 flex-1 text-left truncate">{groupLabels[key] ?? key}</span>
+                  <span data-ui="instance-categories-dialog-span-3" className="rounded-full bg-background border border-border px-2 py-0.5 text-[10px] font-normal text-muted-foreground">{cats.length}</span>
                 </button>
                 {!collapsed && cats.map((cat) => {
                   const checked = draft.some((c) => c.name === cat.name)
                   const hasSvg = cat.icon && cat.icon.trimStart().startsWith("<svg")
                   const hasImg = cat.icon && !hasSvg && cat.icon.startsWith("http")
                   return (
-                    <label
+                    <label data-ui="instance-categories-dialog-label-1"
                       key={`${key}:${cat.name}`}
                       className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer text-sm"
                     >
@@ -136,17 +139,17 @@ export function CategoriesDialog({ categories, selected, onApply, triggerClassNa
                         }}
                       />
                       {hasSvg && (
-                        <span
+                        <span data-ui="instance-categories-dialog-span-4"
                           className="w-4 h-4 shrink-0 text-muted-foreground [&_svg]:w-full [&_svg]:h-full"
                           dangerouslySetInnerHTML={{ __html: cat.icon }}
                         />
                       )}
                       {hasImg && (
-                        <img src={cat.icon} alt="" className="w-4 h-4 shrink-0 rounded-sm object-contain" />
+                        <img data-ui="instance-categories-dialog-img-1" src={cat.icon} alt="" className="w-4 h-4 shrink-0 rounded-sm object-contain" />
                       )}
-                      <span className="flex-1">{cat.name}</span>
-                      {cat.header !== "categories" && (
-                        <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{cat.header}</span>
+                      <span data-ui="instance-categories-dialog-span-5" className="flex-1">{cat.name}</span>
+                      {cat.header !== "categories" && cat.header !== "FTB" && (
+                        <span data-ui="instance-categories-dialog-span-6" className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{cat.header}</span>
                       )}
                     </label>
                   )
@@ -156,7 +159,7 @@ export function CategoriesDialog({ categories, selected, onApply, triggerClassNa
           })}
         </div>
         {draft.length > 0 && (
-          <button
+          <button data-ui="instance-categories-dialog-button-3"
             type="button"
             onClick={() => setDraft([])}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors mt-1"
@@ -164,15 +167,15 @@ export function CategoriesDialog({ categories, selected, onApply, triggerClassNa
             {t("buildDetail.resetAll")}
           </button>
         )}
-        <div className="flex justify-end gap-2 mt-3">
-          <button
+        <div data-ui="instance-categories-dialog-div-3" data-component="categories-dialog" className="flex justify-end gap-2 mt-3">
+          <button data-ui="instance-categories-dialog-button-4"
             type="button"
             onClick={() => setOpen(false)}
-            className="rounded-lg border border-border px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            className="rounded-lg border border-border bg-muted px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors"
           >
-            {t("common.cancel")}
+            {<span className="inline-flex items-center justify-center gap-2"><LauncherCancelIcon className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />{t("common.cancel")}</span>}
           </button>
-          <button
+          <button data-ui="instance-categories-dialog-button-5"
             type="button"
             onClick={() => {
               onApply(draft)

@@ -15,7 +15,7 @@ export function ServerTrashView({ onBack }: ServerTrashViewProps) {
 
   return (
     <TrashView<McServerInfo>
-      load={async () => (await window.electronAPI?.mcServerListTrash()) ?? []}
+      load={async () => (await window.electrobunAPI?.mcServerListTrash()) ?? []}
       row={(item) => ({
         key: item.id,
         name: item.name,
@@ -23,15 +23,15 @@ export function ServerTrashView({ onBack }: ServerTrashViewProps) {
         iconPadding: "p-1",
         fallbackIcon: <LoaderIcon loaderId={item.modloader} className="w-5 h-5 text-primary/40" />,
         meta: (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>{item.gameVersion}</span>
-            <span>fetch failed</span>
+          <div data-ui="server-trash-view-div-1" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span data-ui="server-trash-view-span-1">{item.gameVersion}</span>
+            <span data-ui="server-trash-view-span-2">&middot;</span>
             <LoaderIcon loaderId={item.modloader} className="w-3.5 h-3.5 flex-shrink-0" />
-            <span>{loaderLabel(item.modloader)}</span>
+            <span data-ui="server-trash-view-span-3">{loaderLabel(item.modloader)}</span>
           </div>
         ),
         extra: item.trashedAt ? (
-          <p className="text-[11px] text-muted-foreground">
+          <p data-ui="server-trash-view-p-1" className="text-[11px] text-muted-foreground">
             {t("servers.trash.deletedAt", {
               date: new Date(item.trashedAt).toLocaleDateString("ru-RU", {
                 day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
@@ -40,12 +40,12 @@ export function ServerTrashView({ onBack }: ServerTrashViewProps) {
           </p>
         ) : null,
       })}
-      onRestore={async (item) => { await window.electronAPI?.mcServerRestore(item.id) }}
+      onRestore={async (item) => { await window.electrobunAPI?.mcServerRestore(item.id) }}
       onDeleteForever={async (item, options) => {
-        await window.electronAPI?.mcServerPermanentDelete(item.id, options.extra)
+        await window.electrobunAPI?.mcServerPermanentDelete(item.id, options.extra)
       }}
       onPurgeAll={async (options) => {
-        await window.electronAPI?.mcServerPurgeTrash(options.extra)
+        await window.electrobunAPI?.mcServerPurgeTrash(options.extra)
       }}
       confirmExtra={{
         label: t("servers.trash.deleteTunnel"),

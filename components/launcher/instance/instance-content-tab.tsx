@@ -1,8 +1,12 @@
+import { useConfirmDialog } from "@/lib/use-confirm-dialog"
+import {readContentUi,saveContentUi} from "@/lib/content-ui-cache"
+import { isContentDownloadCancelled } from "@/lib/content-download"
+import { Checkbox } from "@/components/ui/checkbox"
 import { memo, useEffect, useMemo, useRef, useState, useDeferredValue, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { useActivityCenter } from "@/src/ActivityCenterContext"
 import { EmptyState } from "@/components/ui/empty-state"
-import { IconSearch, IconUpload, IconTrash, IconRefresh, IconPower, IconCheck, IconDownload, IconArrowRight, IconX, IconArrowUpCircle, IconLock, IconAlertTriangle, IconPuzzle, IconPhoto, IconSparkles } from "@tabler/icons-react"
+import { IconSearch, IconUpload, IconTrash, IconRefresh, IconPower, IconCheck, IconDownload, IconArrowRight, IconX, IconRefreshDot, IconLock, IconAlertTriangle, IconPuzzle, IconPhoto, IconSparkles, IconLoader2 } from "@tabler/icons-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeRaw from "rehype-raw"
@@ -12,12 +16,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Spinner } from "./spinner"
 import { ModalLayer } from "@/components/ui/modal-layer"
+import { ModalTitleIcon } from "@/components/ui/modal-title-icon"
 import { Pagination } from "./pagination"
 import { MODS_PER_PAGE } from "./constants"
 import { contentProjectKey, formatDownloads, isInstalledVersion, matchesBuildVersion } from "./utils"
+import { LoaderIcon } from "./loader-icon"
 import { InstanceUpdatesDialog } from "./instance-updates-dialog"
 import { CategoriesDialog } from "./categories-dialog"
-import { LoaderIcon } from "./loader-icon"
 import { ChangelogContent } from "./changelog-content"
 import { AddonRow } from "@/components/launcher/addon-row"
 import { SourceMark } from "@/components/launcher/source-mark"
@@ -27,32 +32,32 @@ import type { SelectedModCategory } from "./use-mod-search"
 import { getSortLabels, SORT_OPTIONS_BY_SOURCE } from "./sort-options"
 
 const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
-  h1: ({ children }) => <h1 className="text-2xl font-bold text-foreground mt-6 mb-3 pb-2 border-b border-border">{children}</h1>,
-  h2: ({ children }) => <h2 className="text-xl font-bold text-foreground mt-5 mb-2">{children}</h2>,
-  h3: ({ children }) => <h3 className="text-lg font-semibold text-foreground mt-4 mb-2">{children}</h3>,
-  p: ({ children }) => <p className="text-muted-foreground mb-3 leading-relaxed">{children}</p>,
-  li: ({ children }) => <li className="text-muted-foreground ml-4 mb-1">{children}</li>,
-  ul: ({ children }) => <ul className="list-disc mb-4 space-y-1">{children}</ul>,
-  ol: ({ children }) => <ol className="list-decimal mb-4 space-y-1">{children}</ol>,
-  code: ({ children }) => <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground">{children}</code>,
-  pre: ({ children }) => <pre className="bg-muted p-4 rounded-lg text-sm font-mono overflow-x-auto mb-4">{children}</pre>,
-  a: ({ href, children }) => <a href={href} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>,
-  strong: ({ children }) => <strong className="text-foreground font-semibold">{children}</strong>,
-  blockquote: ({ children }) => <blockquote className="border-l-4 border-primary/50 pl-4 my-4 text-muted-foreground italic">{children}</blockquote>,
-  hr: () => <hr className="border-border my-6" />,
-  img: ({ src, alt }) => <img src={src} alt={alt || ""} className="rounded-lg max-w-full my-4" />,
+  h1: ({ children }) => <h1 data-ui="instance-instance-content-tab-h1-1" className="text-2xl font-bold text-foreground mt-6 mb-3 pb-2 border-b border-border">{children}</h1>,
+  h2: ({ children }) => <h2 data-ui="instance-instance-content-tab-h2-1" className="text-xl font-bold text-foreground mt-5 mb-2">{children}</h2>,
+  h3: ({ children }) => <h3 data-ui="instance-instance-content-tab-h3-1" className="text-lg font-semibold text-foreground mt-4 mb-2">{children}</h3>,
+  p: ({ children }) => <p data-ui="instance-instance-content-tab-p-1" className="text-muted-foreground mb-3 leading-relaxed">{children}</p>,
+  li: ({ children }) => <li data-ui="instance-instance-content-tab-li-1" className="text-muted-foreground ml-4 mb-1">{children}</li>,
+  ul: ({ children }) => <ul data-ui="instance-instance-content-tab-ul-1" className="list-disc mb-4 space-y-1">{children}</ul>,
+  ol: ({ children }) => <ol data-ui="instance-instance-content-tab-ol-1" className="list-decimal mb-4 space-y-1">{children}</ol>,
+  code: ({ children }) => <code data-ui="instance-instance-content-tab-code-1" className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground">{children}</code>,
+  pre: ({ children }) => <pre data-ui="instance-instance-content-tab-pre-1" className="bg-muted p-4 rounded-lg text-sm font-mono overflow-x-auto mb-4">{children}</pre>,
+  a: ({ href, children }) => <a data-ui="instance-instance-content-tab-a-1" href={href} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>,
+  strong: ({ children }) => <strong data-ui="instance-instance-content-tab-strong-1" className="text-foreground font-semibold">{children}</strong>,
+  blockquote: ({ children }) => <blockquote data-ui="instance-instance-content-tab-blockquote-1" className="border-l-4 border-primary/50 pl-4 my-4 text-muted-foreground italic">{children}</blockquote>,
+  hr: () => <hr data-ui="instance-instance-content-tab-hr-1" className="border-border my-6" />,
+  img: ({ src, alt }) => <img data-ui="instance-instance-content-tab-img-1" src={src} alt={alt || ""} className="rounded-lg max-w-full my-4" />,
   table: ({ children }) => (
-    <div className="my-4 overflow-x-auto rounded-xl border border-border">
-      <table className="w-full border-collapse text-sm">{children}</table>
+    <div data-ui="instance-instance-content-tab-div-1" className="my-4 overflow-x-auto rounded-xl border border-border">
+      <table data-ui="instance-instance-content-tab-table-1" className="w-full border-collapse text-sm">{children}</table>
     </div>
   ),
-  thead: ({ children }) => <thead className="bg-muted/50">{children}</thead>,
-  tbody: ({ children }) => <tbody>{children}</tbody>,
-  tr: ({ children }) => <tr className="border-b border-border last:border-0">{children}</tr>,
+  thead: ({ children }) => <thead data-ui="instance-instance-content-tab-thead-1" className="bg-muted/50">{children}</thead>,
+  tbody: ({ children }) => <tbody data-ui="instance-instance-content-tab-tbody-1">{children}</tbody>,
+  tr: ({ children }) => <tr data-ui="instance-instance-content-tab-tr-1" className="border-b border-border last:border-0">{children}</tr>,
   th: ({ children }) => (
-    <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-foreground whitespace-nowrap">{children}</th>
+    <th data-ui="instance-instance-content-tab-th-1" className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-foreground whitespace-nowrap">{children}</th>
   ),
-  td: ({ children }) => <td className="px-4 py-2.5 align-top text-muted-foreground">{children}</td>,
+  td: ({ children }) => <td data-ui="instance-instance-content-tab-td-1" className="px-4 py-2.5 align-top text-muted-foreground">{children}</td>,
 }
 
 export function normalizeContentIdentity(value?: string): string {
@@ -79,7 +84,7 @@ interface InstanceContentTabProps {
   categories?: ModCategory[]
   modTotalPages?: number
   modFileInputRef: React.RefObject<HTMLInputElement | null>
-  onUploadFile: (file: File) => void
+  onUploadFile: (file: File) => void | Promise<void>
   modLoading: boolean
   modTotalHits: number
   modPage: number
@@ -90,9 +95,10 @@ interface InstanceContentTabProps {
   installingModSlug: string | null
   setInstallingModSlug: (slug: string | null) => void
   addModToBuild: (buildId: string, mod: ModSearchResult) => void
-  addContentToBuild: (buildId: string, type: "resourcepacks" | "shaders", mod: ModSearchResult) => void | Promise<void>
-  installContentToBuild: (mod: ModSearchResult, type: "resourcepacks" | "shaders", onPhase?: (phase: "resolving" | "confirm" | "downloading" | "deps" | null) => void) => void | Promise<void>
+  addContentToBuild: (buildId: string, type: "resourcepacks" | "shaders", mod: ModSearchResult, version?: ModVersion) => Promise<boolean>
+  installContentToBuild: (mod: ModSearchResult, type: "resourcepacks" | "shaders", onPhase?: (phase: "resolving" | "confirm" | "downloading" | "deps" | null) => void) => void | Promise<boolean | void>
   removeContentFromBuild: (buildId: string, type: "mods" | "resourcepacks" | "shaders", item: Build["mods"][number]) => Promise<boolean>
+  beginContentMutation: (buildId: string) => () => void
   installModToBuild: (mod: ModSearchResult, onPhase?: (phase: "resolving" | "confirm" | "downloading" | "deps" | null) => void) => void | Promise<void>
   setBuilds: React.Dispatch<React.SetStateAction<Build[]>>
   toggleItemEnabled: (buildId: string, type: "mods" | "resourcepacks" | "shaders", itemId: string) => void | Promise<boolean>
@@ -130,13 +136,15 @@ export const InstanceContentTab = memo(function InstanceContentTab({
   addContentToBuild,
   installContentToBuild,
   removeContentFromBuild,
+  beginContentMutation,
   installModToBuild,
   setBuilds,
   toggleItemEnabled,
   updateItemVersion,
 }: InstanceContentTabProps) {
   const { t } = useTranslation()
-  const { pushNotification } = useActivityCenter()
+  const { ask, dialog: confirmationDialog } = useConfirmDialog()
+  const { pushNotification, endContentInstall } = useActivityCenter()
   const installedItems = type === "mods" ? activeBuild.mods : type === "resourcepacks" ? activeBuild.resourcepacks : activeBuild.shaders
   const emptyStateText = type === "mods" ? t("builds.findMods") : type === "resourcepacks" ? t("builds.findResourcePacks") : t("builds.findShaders")
   /** Иконка типа контента — та же, что у вкладки: моды/ресурспаки/шейдеры. */
@@ -144,10 +152,134 @@ export const InstanceContentTab = memo(function InstanceContentTab({
   const notFoundText = type === "mods" ? t("builds.noModsFound") : type === "resourcepacks" ? t("builds.noResourcePacksFound") : t("builds.noShadersFound")
   const deferredResults = useDeferredValue(displayResults)
 
+  const [selectedProjects, setSelectedProjects] = useState<Record<string, ModSearchResult>>({})
+  const [batchInstalling, setBatchInstalling] = useState(false)
+  const batchRunning = useRef(false)
+  const batchGeneration = useRef(0)
+  const latestInstall = useRef({ installModToBuild, installContentToBuild, isInstalledFn })
+  latestInstall.current = { installModToBuild, installContentToBuild, isInstalledFn }
+  useEffect(() => {
+    setSelectedProjects({})
+    return () => { batchGeneration.current++ }
+  }, [activeBuild.id, type])
+  useEffect(() => {
+    setSelectedProjects(current => {
+      const remaining = Object.entries(current).filter(([, project]) => !isInstalledFn?.(project))
+      return remaining.length === Object.keys(current).length ? current : Object.fromEntries(remaining)
+    })
+  }, [installedItems, isInstalledFn])
+  const installSelected = async () => {
+    if (batchRunning.current || installingModSlug !== null) return
+    const projects = Object.values(selectedProjects)
+    if (isLocked && !await ask(t("buildDetail.lockedInstallConfirm", { name: projects.map(project => project.name).join(", ") }))) return
+    batchRunning.current = true
+    setBatchInstalling(true)
+    const finishMutation = beginContentMutation(activeBuild.id)
+    const generation = batchGeneration.current
+    try {
+      for (const project of projects) {
+        if (generation !== batchGeneration.current) break
+        if (latestInstall.current.isInstalledFn?.(project)) continue
+        setInstallingModSlug(contentProjectKey(project))
+        setInstallPhase("resolving")
+        setDownloadProgress(null)
+        try {
+          if (type === "mods") await latestInstall.current.installModToBuild(project, setInstallPhase)
+          else await latestInstall.current.installContentToBuild(project, type, setInstallPhase)
+        } catch (error) {
+          if (isContentDownloadCancelled(error)) { endContentInstall(); break }
+          pushNotification({ kind: "error", source: "install", title: project.name, message: error instanceof Error ? error.message : String(error) })
+        }
+      }
+    } finally {
+      finishMutation()
+      batchRunning.current = false
+      setBatchInstalling(false)
+      setInstallPhase(null)
+      setInstallingModSlug(null)
+    }
+  }
+
   const [removingSlug, setRemovingSlug] = useState<string | null>(null)
-  const [installedSearch, setInstalledSearch] = useState("")
+  const contentUiKey=activeBuild.id+":"+type
+  const [initialContentUi]=useState(()=>readContentUi(contentUiKey))
+  const [selectedInstalled, setSelectedInstalled] = useState<Set<string>>(()=>new Set(initialContentUi?.selected??[]))
+  const [batchRemoving, setBatchRemoving] = useState(false)
+  const [batchToggling, setBatchToggling] = useState(false)
+  const batchBusy = batchRemoving || batchToggling
+  const selectedHaveEnabled = installedItems.some(item => selectedInstalled.has(item.id) && item.enabled !== false)
+  const removingBatch = useRef(false)
+  const expectedInstalledCount=(activeBuild as Build & {modsCount?:number;resourcepacksCount?:number;shadersCount?:number})[type==="mods"?"modsCount":type==="resourcepacks"?"resourcepacksCount":"shadersCount"]??installedItems.length
+  useEffect(() => {
+    if(!installedItems.length&&expectedInstalledCount>0)return
+    setSelectedInstalled(current => {
+      const ids = new Set(installedItems.map(item => item.id))
+      const next = new Set([...current].filter(id => ids.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [installedItems,expectedInstalledCount])
+  const [deleteConfirmation, setDeleteConfirmation] = useState<BuildMod[]>([])
+  useEffect(() => { setDeleteConfirmation([]) }, [activeBuild.id, type])
+  const removeSelected = async (items: BuildMod[]) => {
+    if (removingBatch.current || removingSlug !== null) return
+    if (!items.length) return
+    setDeleteConfirmation([])
+    removingBatch.current = true
+    setBatchRemoving(true)
+    const finishMutation = beginContentMutation(activeBuild.id)
+    try {
+      for (const item of items) {
+        setRemovingSlug(item.slug)
+        try {
+          const removed = await removeContentFromBuild(activeBuild.id, type, item)
+          if (!removed) throw new Error(t("addon.batch.deleteFailed", { name: item.name }))
+          setSelectedInstalled(current => { const next = new Set(current); next.delete(item.id); return next })
+        } catch (error) {
+          pushNotification({ kind: "error", source: "install", title: item.name, message: error instanceof Error ? error.message : String(error) })
+        }
+      }
+    } finally {
+      finishMutation()
+      removingBatch.current = false
+      setBatchRemoving(false)
+      setRemovingSlug(null)
+    }
+  }
+
+  const toggleSelected = async () => {
+    if (removingBatch.current || removingSlug !== null) return
+    const enabled = !selectedHaveEnabled
+    const items = installedItems.filter(item => selectedInstalled.has(item.id) && (item.enabled ?? true) !== enabled)
+    if (!items.length) return
+    removingBatch.current = true
+    setBatchToggling(true)
+    const finishMutation = beginContentMutation(activeBuild.id)
+    try {
+      for (const item of items) {
+        try {
+          const result = await toggleItemEnabled(activeBuild.id, type, item.id)
+          if (result === false) throw new Error(t("addon.batch.toggleFailed", { name: item.name }))
+        } catch (error) {
+          pushNotification({ kind: "error", source: "install", title: item.name, message: error instanceof Error ? error.message : String(error) })
+        }
+      }
+    } finally {
+      finishMutation()
+      removingBatch.current = false
+      setBatchToggling(false)
+    }
+  }
+
+  const [installedSearch, setInstalledSearch] = useState(initialContentUi?.search??"")
   /** Страница списка установленного контента (0-based, как в Pagination). */
-  const [installedPage, setInstalledPage] = useState(0)
+  const [installedPage, setInstalledPage] = useState(initialContentUi?.page??0)
+  const contentUiRef=useRef({search:installedSearch,page:installedPage,selected:[...selectedInstalled],scrollTop:initialContentUi?.scrollTop??0})
+  contentUiRef.current={search:installedSearch,page:installedPage,selected:[...selectedInstalled],scrollTop:contentUiRef.current.scrollTop}
+  const contentScrollNode=useRef<HTMLDivElement|null>(null)
+  const pendingContentScroll=useRef(initialContentUi?.scrollTop??null)
+  const restoreContentScroll=useCallback((node:HTMLDivElement|null)=>{contentScrollNode.current=node;if(node)node.scrollTop=contentUiRef.current.scrollTop},[])
+  useEffect(()=>{if(installedItems.length&&pendingContentScroll.current!==null&&contentScrollNode.current){contentScrollNode.current.scrollTop=pendingContentScroll.current;pendingContentScroll.current=null}},[installedItems.length])
+  useEffect(()=>()=>{saveContentUi(contentUiKey,contentUiRef.current)},[contentUiKey])
 
   // Перетаскивание файлов прямо в панель «Встановлено»: файл кладём в сборку как
   // есть — без проверок зависимостей и без запросов к API. Единственное, что
@@ -204,10 +336,10 @@ export const InstanceContentTab = memo(function InstanceContentTab({
 
     // Папку от файла отличает только main, поэтому расклад «подходит / не
     // подходит» спрашиваем у него, а не гадаем по расширению в рендерере.
-    const entries = files.map(file => ({ file, path: window.electronAPI?.getFilePath(file) ?? "" }))
+    const entries = await Promise.all(files.map(async file => ({ file, path: await window.electrobunAPI?.getFilePath(file) ?? "" })))
     const paths = entries.map(entry => entry.path).filter(Boolean)
     const classification = paths.length > 0
-      ? await window.electronAPI?.classifyDropPaths(paths, contentKind)
+      ? await window.electrobunAPI?.classifyDropPaths(paths, contentKind)
       : null
 
     if (!classification) {
@@ -260,8 +392,10 @@ export const InstanceContentTab = memo(function InstanceContentTab({
 
   // Новый поисковый запрос, другая сборка или другой тип контента — всегда
   // начинаем с первой страницы.
+  const lastInstalledSearch=useRef(deferredInstalledSearch)
   useEffect(() => {
-    setInstalledPage(0)
+    if(lastInstalledSearch.current!==deferredInstalledSearch)setInstalledPage(0)
+    lastInstalledSearch.current=deferredInstalledSearch
   }, [deferredInstalledSearch, activeBuild.id, type])
   const [versionPickerItem, setVersionPickerItem] = useState<BuildMod | null>(null)
   const [versionPickerVersions, setVersionPickerVersions] = useState<ModVersion[]>([])
@@ -270,42 +404,20 @@ export const InstanceContentTab = memo(function InstanceContentTab({
   const [updatingSlug, setUpdatingSlug] = useState<string | null>(null)
   const [cfChangelogs, setCfChangelogs] = useState<Record<string, string>>({})
   const [loadingPickerChangelog, setLoadingPickerChangelog] = useState(false)
-  const [downloadProgress, setDownloadProgress] = useState<{ fileName: string; current: number; total: number } | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState<{ fileName: string; current: number; total: number; downloadId?: string; done?: boolean } | null>(null)
   // Этап установки: до байтов идёт сетевой этап (версии, зависимости) — его показываем словами.
+  const installAttemptRef = useRef<{ cancelled: boolean } | null>(null)
   const [installPhase, setInstallPhase] = useState<"resolving" | "confirm" | "downloading" | "deps" | null>(null)
   const contentType = type === "mods" ? "mod" : type === "resourcepacks" ? "resourcepack" : "shader"
   type ContentCategory = ModCategory & { source?: "modrinth" | "curseforge" }
   const filteredCategories = useMemo(() => (categories ?? []).filter(c => c.projectType === contentType) as ContentCategory[], [categories, contentType])
   const [updatesOpen, setUpdatesOpen] = useState(false)
   const [updatesCount, setUpdatesCount] = useState(0)
-  const [loaderRequirementReport, setLoaderRequirementReport] = useState<BuildLoaderRequirementReport | null>(null)
-  const [loaderWarningDismissed, setLoaderWarningDismissed] = useState(false)
-
-  // Требование мода к версии загрузчика есть только внутри JAR, поэтому оно
-  // читается из файлов сборки и сравнивается с выбранной версией загрузчика.
-  useEffect(() => {
-    if (type !== "mods" || !activeBuild.name || !activeBuild.loaderVersion) {
-      setLoaderRequirementReport(null)
-      return
-    }
-    setLoaderWarningDismissed(false)
-    let cancelled = false
-    window.electronAPI
-      ?.checkBuildLoaderRequirements(activeBuild.name, activeBuild.modLoader, activeBuild.loaderVersion)
-      .then(report => { if (!cancelled) setLoaderRequirementReport(report) })
-      .catch(() => { if (!cancelled) setLoaderRequirementReport(null) })
-    return () => { cancelled = true }
-  }, [type, activeBuild.name, activeBuild.modLoader, activeBuild.loaderVersion, activeBuild.mods.length])
-
-  const loaderIssues = useMemo(
-    () => (loaderRequirementReport?.issues ?? []).filter(issue => !issue.satisfied),
-    [loaderRequirementReport],
-  )
-
+  const [failedVersionIcon, setFailedVersionIcon] = useState<string | null>(null)
   const refreshUpdatesCount = useCallback(async () => {
     try {
       // Счётчики, а не весь кэш: полный ответ весит мегабайты (data-URL иконки).
-      const counts = await window.electronAPI?.getContentUpdatesCounts?.()
+      const counts = await window.electrobunAPI?.getContentUpdatesCounts?.()
       const entry = counts?.[activeBuild.id]
       const count = type === "mods"
         ? (entry?.mods ?? 0)
@@ -344,7 +456,7 @@ export const InstanceContentTab = memo(function InstanceContentTab({
 
     let cancelled = false
     setLoadingPickerChangelog(true)
-    void window.electronAPI?.modsCurseforgeChangelog(item.modId, fileId)
+    void window.electrobunAPI?.modsCurseforgeChangelog(item.modId, fileId)
       .then((text) => {
         if (cancelled) return
         setCfChangelogs(prev => ({ ...prev, [ver.id]: text || "" }))
@@ -356,7 +468,7 @@ export const InstanceContentTab = memo(function InstanceContentTab({
   }, [versionPickerItem, selectedPickerVersion, cfChangelogs])
 
   useEffect(() => {
-    const off = window.electronAPI?.onContentDownloadProgress?.((progress) => {
+    const off = window.electrobunAPI?.onContentDownloadProgress?.((progress) => {
       setDownloadProgress(progress)
     })
     return () => off?.()
@@ -367,17 +479,17 @@ export const InstanceContentTab = memo(function InstanceContentTab({
   }, [updatingSlug, installingModSlug])
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-4">
+    <div key={type} data-ui="instance-instance-content-tab-div-2" data-component="instance-content-tab" className="flex-1 min-h-0 flex flex-col gap-4">
       {isLocked && (
-        <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl border border-amber-500/20 bg-amber-500/5 text-xs text-amber-500/90">
+        <div data-ui="instance-instance-content-tab-div-3" className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl border border-warning/20 bg-warning/5 text-xs text-warning/90">
           <IconLock className="w-4 h-4 shrink-0" />
-          <span>{t("buildDetail.lockedBanner")}</span>
+          <span data-ui="instance-instance-content-tab-span-1">{t("buildDetail.lockedBanner")}</span>
         </div>
       )}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[300px]">
+      <div data-ui="instance-instance-content-tab-div-4" className="flex items-center justify-between gap-3 flex-wrap">
+        <div data-ui="instance-instance-content-tab-div-5" className="relative flex-1 min-w-[300px]">
           <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
+          <input data-ui="instance-instance-content-tab-input-1"
             type="text"
             value={modSearch}
             onChange={e => setModSearch(e.target.value)}
@@ -385,23 +497,23 @@ export const InstanceContentTab = memo(function InstanceContentTab({
             className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-muted/50 border border-border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div data-ui="instance-instance-content-tab-div-6" className="flex items-center gap-2">
           <Select value={modSource} onValueChange={(v) => setModSource(v as SearchSource)}>
             {/* Ширина по содержимому: значок + «Обе платформы» должны влезать целиком */}
-            <SelectTrigger className="w-auto min-w-[150px] h-8 text-xs">
+            <SelectTrigger className="w-auto min-w-[150px] h-8 text-xs rounded-xl bg-muted/50 border border-border text-foreground">
               {/* Значок подставляет сам SelectValue из выбранного пункта — второй не нужен */}
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {/* Порядок пунктов: Modrinth → CurseForge → обе платформы (и Modrinth по умолчанию). */}
               <SelectItem value="modrinth">
-                <span className="flex items-center gap-1.5"><SourceMark source="modrinth" />fetch failed</span>
+                <span data-ui="instance-instance-content-tab-span-2" className="flex items-center gap-1.5"><SourceMark source="modrinth" />Modrinth</span>
               </SelectItem>
               <SelectItem value="curseforge">
-                <span className="flex items-center gap-1.5"><SourceMark source="curseforge" />fetch failed</span>
+                <span data-ui="instance-instance-content-tab-span-3" className="flex items-center gap-1.5"><SourceMark source="curseforge" />CurseForge</span>
               </SelectItem>
               <SelectItem value="both">
-                <span className="flex items-center gap-1.5">
+                <span data-ui="instance-instance-content-tab-span-4" className="flex items-center gap-1.5">
                   <SourceMark source="modrinth" />
                   <SourceMark source="curseforge" />
                   {t("servers.addons.bothPlatforms")}
@@ -410,7 +522,7 @@ export const InstanceContentTab = memo(function InstanceContentTab({
             </SelectContent>
           </Select>
           <Select value={modSortBy} onValueChange={(v) => setModSortBy(v as ModSort)}>
-            <SelectTrigger className="w-auto min-w-[165px] h-8 text-xs">
+            <SelectTrigger className="w-auto min-w-[165px] h-8 text-xs rounded-xl bg-muted/50 border border-border text-foreground">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -425,7 +537,7 @@ export const InstanceContentTab = memo(function InstanceContentTab({
             onApply={(value) => setModCategories?.(value)}
             triggerClassName="px-4 py-2.5 rounded-xl text-sm"
           />
-          <button
+          <button data-ui="instance-instance-content-tab-button-1"
             type="button"
             onClick={() => modFileInputRef.current?.click()}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium bg-muted text-foreground hover:bg-muted/80 transition-colors"
@@ -433,82 +545,37 @@ export const InstanceContentTab = memo(function InstanceContentTab({
             <IconUpload className="w-4 h-4" strokeWidth={1.75} />
             {uploadLabel}
           </button>
-          <input
+          <input data-ui="instance-instance-content-tab-input-2"
             ref={modFileInputRef}
             type="file"
             accept=".jar,.zip"
+            multiple
             className="hidden"
-            onChange={e => {
-              const file = e.target.files?.[0]
-              if (file) {
-                onUploadFile(file)
-                e.target.value = ""
-              }
+            onChange={async e => {
+              const files = Array.from(e.target.files ?? [])
+              e.currentTarget.value = ""
+              for (const file of files) await onUploadFile(file)
             }}
           />
         </div>
       </div>
 
-      <div className="flex flex-1 min-h-0 flex-col gap-4">
-        {loaderIssues.length > 0 && !loaderWarningDismissed && (
-          <div className="shrink-0 rounded-2xl border border-[#FF6625]/40 bg-[#FF6625]/10 p-3">
-            <div className="flex items-start gap-2">
-              <IconAlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#FF6625]" strokeWidth={1.75} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-foreground">
-                  {t("builds.loaderVersionMismatch", {
-                    total: loaderIssues.length,
-                    loader: `${activeBuild.modLoader} ${activeBuild.loaderVersion}`,
-                  })}
-                </p>
-                <ul className="mt-1.5 space-y-0.5">
-                  {loaderIssues.slice(0, 5).map(issue => (
-                    <li key={issue.fileName} className="truncate text-xs text-muted-foreground">
-                      <span className="text-foreground/90">{issue.modName || issue.fileName}</span>
-                      {" — "}
-                      {t("builds.loaderVersionRequired", { loader: issue.loaderId, requirement: issue.requirement })}
-                    </li>
-                  ))}
-                  {loaderIssues.length > 5 && (
-                    <li className="text-xs text-muted-foreground">
-                      {t("builds.loaderVersionMore", { more: loaderIssues.length - 5 })}
-                    </li>
-                  )}
-                </ul>
-              </div>
-              <button
-                type="button"
-                onClick={() => setLoaderWarningDismissed(true)}
-                className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
-                aria-label={t("servers.cancel")}
-              >
-                <IconX className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="grid gap-3 min-h-0 xl:grid-cols-[minmax(0,520px)_minmax(0,1fr)]">
-          <div
+      <div data-ui="instance-instance-content-tab-div-7" className="flex flex-1 min-h-0 flex-col gap-4">
+        <div data-ui="instance-instance-content-tab-div-11" className="grid gap-3 min-h-0 xl:grid-cols-[minmax(0,520px)_minmax(0,1fr)]">
+          <div data-ui="instance-instance-content-tab-div-12"
             className={cn(
               "relative flex flex-col min-h-0 rounded-2xl border bg-card/50 p-4 transition-colors",
-              dragActive ? "border-dashed border-primary bg-primary/5" : "border-border",
+              "border-border",
             )}
             onDragEnter={handleDragEnter}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            {dragActive && (
-              <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center rounded-2xl bg-background/75 backdrop-blur-[1px]">
-                <IconUpload className="mb-2 h-6 w-6 text-primary" strokeWidth={1.75} />
-                <p className="text-sm font-medium text-foreground">{t("builds.dropToAdd")}</p>
-              </div>
-            )}
-            <div className="mb-2 flex items-center justify-between gap-3 shrink-0">
-              <h3 className="text-sm font-medium text-foreground">{t("builds.installed")}</h3>
-              <div className="flex items-center gap-1.5">
-                <button
+            <div data-ui="instance-instance-content-tab-div-14" className="mb-2 flex items-center justify-between gap-3 shrink-0">
+              <h3 data-ui="instance-instance-content-tab-h3-2" className="flex items-center gap-2 text-sm font-medium text-foreground"><IconCheck className="size-4 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("builds.installed")}</h3>
+              <div data-ui="instance-instance-content-tab-div-15" className="flex items-center gap-1.5">
+                <button data-ui="instance-instance-content-tab-button-3"
                   type="button"
                   onClick={() => setUpdatesOpen(true)}
                   className={cn(
@@ -519,24 +586,24 @@ export const InstanceContentTab = memo(function InstanceContentTab({
                   )}
                   title={t("updates.checkTitle")}
                 >
-                  <IconArrowUpCircle className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  <IconRefreshDot className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
                   {t("updates.title")}
                   {updatesCount > 0 && (
-                    <span className="ml-0.5 rounded-full bg-primary px-1.5 py-px text-[10px] font-bold text-primary-foreground">
+                    <span data-ui="instance-instance-content-tab-span-6" className="ml-0.5 rounded-full bg-primary px-1.5 py-px text-[10px] font-bold text-primary-foreground">
                       {updatesCount}
                     </span>
                   )}
                 </button>
-                <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                <span data-ui="instance-instance-content-tab-span-7" className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
                   {installedSearch.trim() ? `${filteredInstalled.length}/${installedItems.length}` : installedItems.length}
                 </span>
               </div>
             </div>
 
             {installedItems.length > 0 && (
-              <div className="relative mb-3 shrink-0">
+              <div data-ui="instance-instance-content-tab-div-16" className="relative mb-3 shrink-0">
                 <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
+                <input data-ui="instance-instance-content-tab-input-3"
                   type="text"
                   value={installedSearch}
                   onChange={e => setInstalledSearch(e.target.value)}
@@ -544,7 +611,7 @@ export const InstanceContentTab = memo(function InstanceContentTab({
                   className="w-full pl-10 pr-8 py-2 rounded-xl bg-muted/50 border border-border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary"
                 />
                 {installedSearch && (
-                  <button
+                  <button data-ui="instance-instance-content-tab-button-4"
                     type="button"
                     onClick={() => setInstalledSearch("")}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:text-foreground transition-colors"
@@ -556,27 +623,29 @@ export const InstanceContentTab = memo(function InstanceContentTab({
               </div>
             )}
 
-            <div className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
-              {installedItems.length === 0 ? (
+            <div data-ui="instance-instance-content-tab-div-17" ref={restoreContentScroll} onScroll={event=>{contentUiRef.current.scrollTop=event.currentTarget.scrollTop}} className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
+              {installedItems.length === 0 || dragActive ? (
                 <EmptyState
                   variant="empty"
-                  icon={typeIcon}
-                  title={emptyStateText}
-                  className="min-h-[180px] rounded-2xl border border-dashed border-border"
+                  icon={dragActive ? IconUpload : typeIcon}
+                  title={dragActive ? t("builds.dropToAdd") : emptyStateText}
+                  className={cn("min-h-[180px] rounded-2xl border border-dashed transition-colors", dragActive ? "border-primary bg-primary/5" : "border-border bg-transparent")}
                 />
               ) : filteredInstalled.length === 0 ? (
                 <EmptyState
                   compact
                   title={t("builds.searchInstalledNoMatch")}
-                  className="min-h-[120px] rounded-2xl border border-dashed border-border"
+                  className="min-h-[120px] rounded-none border-0 bg-transparent"
                 />
               ) : pagedInstalled.map((item) => {
                 const isEnabled = item.enabled ?? true
                 return (
-                <div key={item.id} className={`rounded-xl border p-3 transition-opacity ${isEnabled ? 'border-border bg-muted/20' : 'border-border/50 bg-muted/10 opacity-55'}`}>
-                  <div className="flex items-start gap-3">
-                    <button
+                <div data-ui="instance-instance-content-tab-div-18" key={item.id} className={`rounded-xl border bg-card p-3 transition-opacity ${selectedInstalled.has(item.id) ? 'border-primary ring-1 ring-primary/25' : isEnabled ? 'border-border' : 'border-border/50 opacity-55'}`}>
+                  <div data-ui="instance-instance-content-tab-div-19" className="flex items-start gap-3">
+                    <Checkbox className="mt-3" checked={selectedInstalled.has(item.id)} disabled={batchBusy || removingSlug !== null} aria-label={t("addon.batch.select", { name: item.name })} onCheckedChange={checked => setSelectedInstalled(current => { const next = new Set(current); if (checked === true) next.add(item.id); else next.delete(item.id); return next })} />
+                    <button data-ui="instance-instance-content-tab-button-5"
                       type="button"
+                      disabled={batchBusy}
                       onClick={() => toggleItemEnabled(activeBuild.id, type, item.id)}
                       className={`mt-0.5 rounded-lg border p-2 transition-colors hover:bg-muted/80 ${isEnabled ? 'border-primary/40 text-primary' : 'border-border text-muted-foreground'}`}
                       aria-label={isEnabled ? t("common.disable") : t("common.enable")}
@@ -584,26 +653,26 @@ export const InstanceContentTab = memo(function InstanceContentTab({
                     >
                       <IconPower className={`h-4 w-4 ${isEnabled ? 'fill-primary/20' : ''}`} strokeWidth={1.75} />
                     </button>
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background border border-border">
+                    <div data-ui="instance-instance-content-tab-div-20" className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background border border-border">
                       {item.icon_url ? (
-                        <img src={item.icon_url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                        <img data-ui="instance-instance-content-tab-img-2" src={item.icon_url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                       ) : (
-                        <span className="text-sm font-semibold text-muted-foreground">{item.name[0]}</span>
+                        <span data-ui="instance-instance-content-tab-span-8" className="text-sm font-semibold text-muted-foreground">{item.name[0]}</span>
                       )}
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="text-sm font-medium text-foreground break-words truncate">{item.name}</span>
+                    <div data-ui="instance-instance-content-tab-div-21" className="min-w-0 flex-1">
+                      <div data-ui="instance-instance-content-tab-div-22" className="flex items-center gap-1.5 min-w-0">
+                        <span data-ui="instance-instance-content-tab-span-9" className="text-sm font-medium text-foreground break-words truncate">{item.name}</span>
                         {item.source && item.source !== "local" && (
                           <SourceMark source={item.source} className="shrink-0" />
                         )}
                       </div>
                       {item.author && (
-                        <div className="mt-0.5 text-xs text-muted-foreground/70 truncate">{item.author}</div>
+                        <div data-ui="instance-instance-content-tab-div-23" className="mt-0.5 text-xs text-muted-foreground/70 truncate">{item.author}</div>
                       )}
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <button
+                    <div data-ui="instance-instance-content-tab-div-24" className="flex shrink-0 items-center gap-1">
+                      <button data-ui="instance-instance-content-tab-button-6"
                         type="button"
                         onClick={() => {
                           setSelectedPickerVersion(null)
@@ -611,24 +680,36 @@ export const InstanceContentTab = memo(function InstanceContentTab({
                           setVersionPickerVersions([])
                           setVersionPickerLoading(true)
                           const fetchPromise = item.source === "modrinth" && item.projectId
-                            ? window.electronAPI?.modsModrinthVersions(item.projectId)
+                            ? window.electrobunAPI?.modsModrinthVersions(item.projectId)
                             : item.source === "curseforge" && item.modId
-                              ? window.electronAPI?.modsCurseforgeDetails(item.modId).then(r => r?.versions ?? [])
-                              : Promise.resolve([])
-                          void Promise.resolve(fetchPromise).then((versions) => {
+                              ? window.electrobunAPI?.modsCurseforgeDetails(item.modId).then(r => r?.versions ?? [])
+                              : window.electrobunAPI?.modsModrinthVersions("", item.id)
+                          void Promise.resolve(fetchPromise).then(async versions => {
+                            // При неполных или устаревших метаданных определяем проект по файлу.
+                            if (!versions?.length && (item.projectId || item.modId)) {
+                              return await window.electrobunAPI?.modsModrinthVersions("", item.id)
+                            }
+                            return versions
+                          }).then((versions) => {
                             const list = (versions ?? []) as ModVersion[]
                             // Для модов фильтруем по загрузчику сборки (fabric/neoforge/...)
                             // и версии Minecraft, чтобы не показывать несовместимые.
                             const requireLoader = type === "mods"
                             const compatible = list.filter(v => matchesBuildVersion(v, activeBuild, requireLoader))
                             const gameOnly = list.filter(v => matchesBuildVersion(v, activeBuild, false))
-                            const shown = compatible.length > 0 ? compatible : (gameOnly.length > 0 ? gameOnly : list)
+                             const installedVersion = list.find(v => isInstalledVersion(v, item, activeBuild.version))
+                             const shown = compatible.length > 0 ? [...compatible] : (requireLoader ? [] : [...gameOnly])
+                             // Установленная версия может быть для другой Minecraft:
+                             // всё равно показываем её с отметкой, а не теряем из списка.
+                             if (installedVersion && !shown.some(v => v.id === installedVersion.id)) shown.push(installedVersion)
                             setVersionPickerVersions(shown)
-                            setVersionPickerLoading(false)
                             // Раскрываем changelog установленной версии сразу.
-                            const current = shown.find(v => v.name === item.version || v.id === item.version)
+                            const current = shown.find(v => isInstalledVersion(v, item, activeBuild.version))
                             if (current) setSelectedPickerVersion(current)
-                          })
+                          }).catch(error => {
+                            console.error("Failed to load installed content versions:", error)
+                            pushNotification({ kind: "error", source: "install", title: t("common.errorTitle"), message: String(error) })
+                          }).finally(() => setVersionPickerLoading(false))
                         }}
                         className="rounded-lg border border-border p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
                         aria-label={t("common.refresh")}
@@ -636,12 +717,14 @@ export const InstanceContentTab = memo(function InstanceContentTab({
                       >
                         <IconRefresh className="h-4 w-4" strokeWidth={1.75} />
                       </button>
-                      <button
+                      <button data-ui="instance-instance-content-tab-button-7"
                         type="button"
-                        disabled={removingSlug === item.slug}
+                        disabled={batchBusy || removingSlug !== null}
                         onClick={() => {
                           setRemovingSlug(item.slug)
-                          void removeContentFromBuild(activeBuild.id, type, item).finally(() => setRemovingSlug(null))
+                          void removeContentFromBuild(activeBuild.id, type, item).then(removed => {
+                            if (!removed) pushNotification({ kind: "error", source: "install", title: t("common.errorTitle"), message: t("addon.batch.deleteFailed", { name: item.name }) })
+                          }).finally(() => setRemovingSlug(null))
                         }}
                         className="rounded-lg border border-border p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60"
                         aria-label={t("common.delete")}
@@ -655,6 +738,33 @@ export const InstanceContentTab = memo(function InstanceContentTab({
               )})}
             </div>
 
+            {installedItems.length > 0 && (
+              <div className="mt-3 shrink-0 rounded-xl border border-border bg-card p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Checkbox disabled={batchBusy || removingSlug !== null || !filteredInstalled.length}
+                      checked={filteredInstalled.length > 0 && filteredInstalled.every(item => selectedInstalled.has(item.id)) ? true : filteredInstalled.some(item => selectedInstalled.has(item.id)) ? "indeterminate" : false}
+                      onCheckedChange={checked => setSelectedInstalled(current => { const next = new Set(current); for (const item of filteredInstalled) { if (checked === true) next.add(item.id); else next.delete(item.id) } return next })} />
+                    {t("addon.batch.selectAll")}
+                  </label>
+                  {selectedInstalled.size > 0 && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{t("addon.batch.selected", { count: selectedInstalled.size })}</span>}
+                </div>
+                {selectedInstalled.size > 0 && (
+                  <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3">
+                    <button type="button" disabled={batchBusy || removingSlug !== null} onClick={() => void toggleSelected()}
+                      className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-border bg-muted/50 px-2 py-2 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50">
+                      {batchToggling ? <IconLoader2 className="size-4 shrink-0 animate-spin text-primary" /> : <IconPower className="size-4 shrink-0 text-primary" />}
+                      <span>{t(selectedHaveEnabled ? "addon.batch.disable" : "addon.batch.enable")}</span>
+                    </button>
+                    <button type="button" disabled={batchBusy || removingSlug !== null} onClick={() => setDeleteConfirmation(installedItems.filter(item => selectedInstalled.has(item.id)))}
+                      className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2 py-2 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-50">
+                      {batchRemoving ? <IconLoader2 className="size-4 shrink-0 animate-spin" /> : <IconTrash className="size-4 shrink-0" />}
+                      <span>{t("addon.batch.delete")}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             <Pagination
               currentPage={installedPageSafe}
               totalPages={installedTotalPages}
@@ -663,35 +773,54 @@ export const InstanceContentTab = memo(function InstanceContentTab({
             />
           </div>
 
-          <div className="flex min-h-0 min-w-0 flex-col rounded-2xl border border-border bg-card/40 p-4">
-            <div className="flex items-center justify-between shrink-0">
-              <h3 className="text-sm font-medium text-muted-foreground">{title}</h3>
+          <div data-ui="instance-instance-content-tab-div-25" className="flex min-h-0 min-w-0 flex-col rounded-2xl border border-border bg-card/40 p-4">
+            <div data-ui="instance-instance-content-tab-div-26" className="flex items-center justify-between shrink-0">
+              <h3 data-ui="instance-instance-content-tab-h3-3" className="text-sm font-medium text-muted-foreground">{title}</h3>
               {!modLoading && displayResults.length > 0 && (
-                <span className="text-xs text-muted-foreground">{t("buildDetail.resultsCount", { count: formatDownloads(modTotalHits) })}</span>
+                <span data-ui="instance-instance-content-tab-span-10" className="text-xs text-muted-foreground">{t("buildDetail.resultsCount", { count: formatDownloads(modTotalHits) })}</span>
               )}
             </div>
 
-            <div className="flex-1 min-h-0 min-w-0 overflow-y-auto pr-1 mt-2">
+            {Object.keys(selectedProjects).length > 0 && <div className="mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/25 bg-primary/5 p-2.5">
+              <span className="text-sm">{t("addon.batch.selected", { count: Object.keys(selectedProjects).length })}</span>
+              <div className="flex items-center gap-2"><button type="button" disabled={batchInstalling} onClick={() => setSelectedProjects({})} className="rounded-lg px-3 py-2 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50">{t("addon.batch.clear")}</button><button type="button" disabled={batchInstalling || installingModSlug !== null} onClick={() => void installSelected()} className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50">{batchInstalling ? <IconLoader2 className="size-4 animate-spin" /> : <IconDownload className="size-4" />}{t("addon.batch.install")}</button></div>
+            </div>}
+            <div data-ui="instance-instance-content-tab-div-27" className="flex-1 min-h-0 min-w-0 overflow-y-auto pr-1 mt-2">
               {displayResults.length > 0 ? (
-                <div className="grid min-w-0 gap-2 pb-2">
+                <div data-ui="instance-instance-content-tab-div-28" className="grid min-w-0 gap-2 pb-2">
                   {deferredResults.map(project => {
                     const installed = isInstalledFn?.(project) ?? false
                     const isInstalling = installingModSlug === contentProjectKey(project)
                     // Проценты берём только после сетевого этапа: иначе на «поиске версии»
                     // показывался бы чужой прогресс от прошлой установки.
-                    const percent = isInstalling && installPhase !== "resolving" && downloadProgress && downloadProgress.total > 0
+                    const percent = isInstalling && downloadProgress && downloadProgress.total > 0
                       ? Math.min(100, Math.round((downloadProgress.current / downloadProgress.total) * 100))
                       : null
                     return (
                       <AddonRow
                         key={project.id}
                         project={project}
+                        selected={!!selectedProjects[contentProjectKey(project)]}
+                        selectionDisabled={batchInstalling}
+                        onSelectionChange={checked => setSelectedProjects(current => {
+                          const next = { ...current }
+                          if (checked) next[contentProjectKey(project)] = project
+                          else delete next[contentProjectKey(project)]
+                          return next
+                        })}
                         installed={installed}
                         installing={isInstalling}
                         percent={percent}
                         phase={isInstalling ? installPhase : null}
+                        onCancelDownload={isInstalling && (installPhase === "resolving" || (downloadProgress?.downloadId && !downloadProgress.done)) ? () => {
+                          if (installAttemptRef.current) installAttemptRef.current.cancelled = true
+                          if (downloadProgress?.downloadId && !downloadProgress.done) void window.electrobunAPI?.cancelContentDownload(downloadProgress.downloadId)
+                          setInstallPhase(null)
+                          setInstallingModSlug(null)
+                          endContentInstall()
+                        } : undefined}
                         showCategories={type === "mods"}
-                        installDisabled={installingModSlug !== null}
+                        installDisabled={batchInstalling || installingModSlug !== null}
                         installLabel={t("builds.add")}
                         projectKind={type === "mods" ? "mod" : type === "resourcepacks" ? "resourcepack" : "shader"}
                         confirmMessage={isLocked
@@ -699,16 +828,27 @@ export const InstanceContentTab = memo(function InstanceContentTab({
                           : undefined}
                         onDetails={() => openProjectModal(project, type === "mods" ? "mod" : type === "resourcepacks" ? "resourcepack" : "shader")}
                         onInstall={() => {
+                          const attempt = { cancelled: false }
+                          installAttemptRef.current = attempt
+                          const phaseChanged = (phase: "resolving" | "confirm" | "downloading" | "deps" | null) => {
+                            if (attempt.cancelled) throw new Error("CONTENT_DOWNLOAD_CANCELLED")
+                            setInstallPhase(phase)
+                          }
                           setInstallingModSlug(contentProjectKey(project))
                           setInstallPhase("resolving")
                           // Чужой прогресс от предыдущей загрузки не должен висеть на новой карточке.
                           setDownloadProgress(null)
                           const task = type === "mods"
-                            ? installModToBuild(project, setInstallPhase)
-                            : installContentToBuild(project, type, setInstallPhase)
-                          Promise.resolve(task).finally(() => {
+                            ? installModToBuild(project, phaseChanged)
+                            : installContentToBuild(project, type, phaseChanged)
+                          Promise.resolve(task).catch(error => {
+                            if (!isContentDownloadCancelled(error)) pushNotification({ kind: "error", source: "install", title: project.name, message: error instanceof Error ? error.message : String(error) })
+                            endContentInstall()
+                          }).finally(() => {
+                            if (installAttemptRef.current !== attempt || attempt.cancelled) return
+                            installAttemptRef.current = null
                             setInstallPhase(null)
-                            setTimeout(() => setInstallingModSlug(null), 500)
+                            setInstallingModSlug(null)
                           })
                         }}
                       />
@@ -718,12 +858,12 @@ export const InstanceContentTab = memo(function InstanceContentTab({
               ) : modLoading ? (
                 <Spinner />
               ) : (modSearch || (modCategories?.length ?? 0) > 0) ? (
-                <EmptyState title={notFoundText} className="h-full" />
+                <EmptyState title={notFoundText} className="h-full rounded-none border-0 bg-transparent" />
               ) : (
                 <EmptyState
                   title={t("addon.search.startHint")}
                   icon={IconSearch}
-                  className="h-full rounded-2xl border border-dashed border-border"
+                  className="h-full rounded-none border-0 bg-transparent"
                 />
               )}
             </div>
@@ -737,20 +877,20 @@ export const InstanceContentTab = memo(function InstanceContentTab({
         </div>
       </div>
 
-      {versionPickerItem !== null && (        <ModalLayer
-          className="z-[60] bg-background/80 backdrop-blur-sm"
+      {versionPickerItem !== null && (        <ModalLayer windowId="instance-instance-content-tab-window-1"
+          className="z-[60] "
           onClose={() => { setVersionPickerItem(null); setSelectedPickerVersion(null) }}
         >
-          <div
+          <div data-ui="instance-instance-content-tab-div-29"
             className="w-full max-w-2xl max-h-[80vh] mx-4 rounded-2xl bg-card border border-border shadow-2xl overflow-hidden flex flex-col"
           >
-            <div className="p-5 border-b border-border flex-shrink-0">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-bold text-foreground">{t("addon.updateTitle", { name: versionPickerItem?.name })}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">{t("addon.currentVersion", { version: versionPickerItem?.version })}</p>
+            <div data-ui="instance-instance-content-tab-div-30" className="p-5 border-b border-border flex-shrink-0">
+              <div data-ui="instance-instance-content-tab-div-31" className="flex items-center justify-between">
+                <div data-ui="instance-instance-content-tab-div-32">
+                  <h3 data-ui="instance-instance-content-tab-h3-4" className="flex items-center gap-2 text-lg font-bold text-foreground">{versionPickerItem.icon_url && failedVersionIcon !== versionPickerItem.icon_url ? <img src={versionPickerItem.icon_url} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" onError={() => setFailedVersionIcon(versionPickerItem.icon_url ?? null)} /> : <ModalTitleIcon><IconPuzzle className="h-4 w-4" strokeWidth={1.75} /></ModalTitleIcon>}{t("addon.updateTitle", { name: versionPickerItem?.name })}</h3>
+                  <p data-ui="instance-instance-content-tab-p-4" className="text-sm text-muted-foreground mt-1">{t("addon.currentVersion", { version: versionPickerItem?.version })}</p>
                 </div>
-                <button
+                <button data-modal-close data-ui="instance-instance-content-tab-button-8"
                   onClick={() => { setVersionPickerItem(null); setSelectedPickerVersion(null) }}
                   className="p-2 rounded-lg border border-border bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 >
@@ -759,29 +899,29 @@ export const InstanceContentTab = memo(function InstanceContentTab({
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5">
+            <div data-ui="instance-instance-content-tab-div-33" className="flex-1 overflow-y-auto p-5">
               {versionPickerLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <IconRefresh className="h-5 w-5 animate-spin text-muted-foreground" strokeWidth={1.75} />
+                <div data-ui="instance-instance-content-tab-div-34" className="flex items-center justify-center py-12">
+                  <IconLoader2 className="h-5 w-5 text-primary animate-spin" strokeWidth={1.75} />
                 </div>
               ) : versionPickerVersions.length === 0 ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">{t("addon.versions.unavailable")}</p>
+                <p data-ui="instance-instance-content-tab-p-5" className="py-6 text-center text-sm text-muted-foreground">{t("addon.versions.unavailable")}</p>
               ) : (
-                <div className="space-y-2">
+                <div data-ui="instance-instance-content-tab-div-35" className="space-y-2">
                   {(() => {
                     // Установленная версия хранится как номер из jar, а в каталоге версия
                     // названа иначе — сравниваем общим помощником (см. utils).
-                    const installed = versionPickerItem?.version
                     // Всё, что ниже текущей версии в списке (он отсортирован от новых к старым), — старее.
-                    const installedIndex = versionPickerVersions.findIndex(ver => isInstalledVersion(ver, installed))
+                    const installedRef = versionPickerItem
+                    const installedIndex = versionPickerVersions.findIndex(ver => isInstalledVersion(ver, installedRef, activeBuild?.version))
 
                     return versionPickerVersions.map((ver, index) => {
-                    const isCurrent = isInstalledVersion(ver, installed)
+                    const isCurrent = index === installedIndex
                     const isSelected = selectedPickerVersion?.id === ver.id
                     const isOlder = installedIndex >= 0 ? index > installedIndex : false
 
                     return (
-                      <button
+                      <button data-ui="instance-instance-content-tab-button-9"
                         key={ver.id}
                         type="button"
                         onClick={() => setSelectedPickerVersion(isSelected ? null : ver)}
@@ -794,41 +934,41 @@ export const InstanceContentTab = memo(function InstanceContentTab({
                               : "border-border bg-muted/20 hover:bg-muted/30"
                         )}
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-foreground">{ver.name}</span>
+                        <div data-ui="instance-instance-content-tab-div-36" className="flex items-center justify-between">
+                          <div data-ui="instance-instance-content-tab-div-37" className="flex-1">
+                            <div data-ui="instance-instance-content-tab-div-38" className="flex items-center gap-2">
+                              <span data-ui="instance-instance-content-tab-span-11" className="font-medium text-foreground">{ver.name}</span>
                               {isCurrent && (
-                                <span className="inline-flex items-center gap-1 rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                                <span data-ui="instance-instance-content-tab-span-12" className="inline-flex items-center gap-1 rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                                   <IconCheck className="w-3 h-3" />
                                   {t("addon.versions.current")}
                                 </span>
                               )}
                               {isOlder && !isCurrent && (
-                                <span className="text-xs text-muted-foreground">{t("addon.versions.older")}</span>
+                                <span data-ui="instance-instance-content-tab-span-13" className="text-xs text-muted-foreground">{t("addon.versions.older")}</span>
                               )}
                             </div>
-                            <div className="flex items-center gap-3 mt-1">
-                              <span className="text-xs text-muted-foreground">{ver.gameVersion ?? ""}</span>
-                              {ver.loaders && (
-                                <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground flex items-center gap-1.5">
-                                  {(Array.isArray(ver.loaders) ? ver.loaders : [ver.loaders]).map(l => (
-                                    <LoaderIcon key={String(l)} loaderId={String(l).toLowerCase()} className="w-3.5 h-3.5" />
+                            <div data-ui="instance-instance-content-tab-div-39" className="flex flex-wrap items-center gap-2 mt-1">
+                              <span data-ui="instance-instance-content-tab-span-20" className="text-xs text-muted-foreground">{ver.gameVersion ?? ""}</span>
+                              {ver.loaders && ver.loaders.length > 0 && (
+                                <span data-ui="instance-instance-content-tab-span-21" className="inline-flex items-center gap-1.5 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                  {ver.loaders.map(loader => (
+                                    <LoaderIcon key={String(loader)} loaderId={String(loader).toLowerCase()} className="w-3.5 h-3.5" />
                                   ))}
-                                  <span>{Array.isArray(ver.loaders) ? ver.loaders.join(", ") : ver.loaders}</span>
+                                  <span>{ver.loaders.join(", ")}</span>
                                 </span>
                               )}
                               {ver.datePublished && (
-                                <span className="text-xs text-muted-foreground">
+                                <span data-ui="instance-instance-content-tab-span-14" className="text-xs text-muted-foreground">
                                   {new Date(ver.datePublished).toLocaleDateString()}
                                 </span>
                               )}
                               {ver.versionType && (
-                                <span className={cn(
+                                <span data-ui="instance-instance-content-tab-span-15" className={cn(
                                   "rounded px-1.5 py-0.5 text-[10px] font-medium uppercase",
-                                  ver.versionType === "release" ? "bg-green-500/10 text-green-500"
-                                    : ver.versionType === "beta" ? "bg-yellow-500/10 text-yellow-500"
-                                      : "bg-red-500/10 text-red-500"
+                                  ver.versionType === "release" ? "bg-success/10 text-success"
+                                    : ver.versionType === "beta" ? "bg-warning/10 text-warning"
+                                      : "bg-destructive/10 text-destructive"
                                 )}>
                                   {ver.versionType}
                                 </span>
@@ -842,43 +982,43 @@ export const InstanceContentTab = memo(function InstanceContentTab({
                         </div>
 
                         {isSelected && (
-                          <div className="mt-4 pt-4 border-t border-border">
+                          <div data-ui="instance-instance-content-tab-div-40" className="mt-4 pt-4 border-t border-border">
                             {(() => {
                               const changelogText = ver.changelog || cfChangelogs[ver.id]
                               if (changelogText) {
                                 return (
-                                  <div className="text-sm text-muted-foreground">
-                                    <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">{t("addon.changelog.whatsChanged")}</div>
+                                  <div data-ui="instance-instance-content-tab-div-41" className="text-sm text-muted-foreground">
+                                    <div data-ui="instance-instance-content-tab-div-42" className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">{t("addon.changelog.whatsChanged")}</div>
                                     <ChangelogContent content={changelogText} components={mdComponents} />
                                   </div>
                                 )
                               }
                               if (loadingPickerChangelog) {
                                 return (
-                                  <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
-                                    <IconRefresh className="h-3.5 w-3.5 animate-spin text-primary" strokeWidth={1.75} />
-                                    <span>{t("addon.changelog.loadingDescription")}</span>
+                                  <div data-ui="instance-instance-content-tab-div-43" className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+                                    <IconLoader2 className="h-3.5 w-3.5 text-primary animate-spin" strokeWidth={1.75} />
+                                    <span data-ui="instance-instance-content-tab-span-16">{t("addon.changelog.loadingDescription")}</span>
                                   </div>
                                 )
                               }
-                              return <p className="text-sm text-muted-foreground">{t("addon.changelog.emptyDescription")}</p>
+                              return <p data-ui="instance-instance-content-tab-p-6" className="text-sm text-muted-foreground">{t("addon.changelog.emptyDescription")}</p>
                             })()}
 
-                            <div className="flex items-center gap-3 mt-4">
+                            <div data-ui="instance-instance-content-tab-div-44" className="flex items-center gap-3 mt-4">
                               {ver.files && ver.files.length > 0 && (
-                                <span className="text-xs text-muted-foreground">
+                                <span data-ui="instance-instance-content-tab-span-17" className="text-xs text-muted-foreground">
                                   {t("addon.filesCount", { count: ver.files.length })}
                                 </span>
                               )}
                               {ver.downloadCount !== undefined && (
-                                <span className="text-xs text-muted-foreground">
+                                <span data-ui="instance-instance-content-tab-span-18" className="text-xs text-muted-foreground">
                                   {t("addon.downloadsCount", { count: ver.downloadCount.toLocaleString() })}
                                 </span>
                               )}
                             </div>
 
                             {!isCurrent && (
-                              <button
+                              <button data-ui="instance-instance-content-tab-button-10"
                                 type="button"
                                 disabled={updatingSlug === versionPickerItem?.id}
                                 onClick={(e) => {
@@ -900,12 +1040,12 @@ export const InstanceContentTab = memo(function InstanceContentTab({
                             )}
 
                             {updatingSlug === versionPickerItem?.id && downloadProgress && downloadProgress.total > 0 && (
-                              <div className="mt-4">
-                                <div className="flex items-center justify-end text-xs text-muted-foreground mb-1">
-                                  <span className="shrink-0 ml-2">{Math.round((downloadProgress.current / downloadProgress.total) * 100)}%</span>
+                              <div data-ui="instance-instance-content-tab-div-45" className="mt-4">
+                                <div data-ui="instance-instance-content-tab-div-46" className="flex items-center justify-end text-xs text-muted-foreground mb-1">
+                                  <span data-ui="instance-instance-content-tab-span-19" className="shrink-0 ml-2">{Math.round((downloadProgress.current / downloadProgress.total) * 100)}%</span>
                                 </div>
-                                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                                  <div
+                                <div data-ui="instance-instance-content-tab-div-47" className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                                  <div data-ui="instance-instance-content-tab-div-48"
                                     className="h-full rounded-full bg-primary transition-[width] duration-200"
                                     style={{ width: `${Math.min(100, (downloadProgress.current / downloadProgress.total) * 100)}%` }}
                                   />
@@ -925,31 +1065,53 @@ export const InstanceContentTab = memo(function InstanceContentTab({
         </ModalLayer>
       )}
 
+      {confirmationDialog}
       <InstanceUpdatesDialog
         activeBuild={activeBuild}
+        contentType={type}
         open={updatesOpen}
         onOpenChange={setUpdatesOpen}
         updateItemVersion={updateItemVersion}
       />
 
-      <Dialog open={rejectedEntries.length > 0} onOpenChange={open => { if (!open) setRejectedEntries([]) }}>
-        <DialogContent className="max-w-md">
+      <Dialog open={deleteConfirmation.length > 0} onOpenChange={open => { if (!open) setDeleteConfirmation([]) }}>
+        <DialogContent className="max-w-md rounded-2xl">
           <DialogHeader>
-            <DialogTitle>{t("builds.dropRejectedTitle")}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 pr-10">
+              <ModalTitleIcon><IconTrash className="h-4 w-4" strokeWidth={1.75} /></ModalTitleIcon>
+              {t("addon.batch.delete")}
+            </DialogTitle>
+            <DialogDescription>{t("addon.batch.confirmDelete", { count: deleteConfirmation.length })}</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <button type="button" autoFocus onClick={() => setDeleteConfirmation([])} className="flex items-center gap-2 rounded-xl border border-border bg-muted px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/80">
+              <IconX className="h-4 w-4" strokeWidth={1.75} />{t("common.cancel")}
+            </button>
+            <button type="button" onClick={() => void removeSelected(deleteConfirmation)} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+              <IconTrash className="h-4 w-4" strokeWidth={1.75} />{t("addon.batch.delete")}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={rejectedEntries.length > 0} onOpenChange={open => { if (!open) setRejectedEntries([]) }}>
+        <DialogContent data-window="instance-instance-content-tab-window-2" className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><ModalTitleIcon><IconAlertTriangle className="h-4 w-4" strokeWidth={1.75} /></ModalTitleIcon>{t("builds.dropRejectedTitle")}</DialogTitle>
             <DialogDescription>
               {type === "mods" ? t("builds.dropHintMods") : t("builds.dropHintContent")}
             </DialogDescription>
           </DialogHeader>
-          <div className="mt-1 max-h-64 space-y-2 overflow-y-auto pr-1">
+          <div data-ui="instance-instance-content-tab-div-49" className="mt-1 max-h-64 space-y-2 overflow-y-auto pr-1">
             {rejectedEntries.map((entry, index) => (
-              <div key={`${entry.name}-${index}`} className="rounded-xl border border-border bg-muted/20 px-3 py-2">
-                <p className="truncate text-sm font-medium text-foreground">{entry.name}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{t(`builds.dropReject.${entry.reason}`)}</p>
+              <div data-ui="instance-instance-content-tab-div-50" key={`${entry.name}-${index}`} className="rounded-xl border border-border bg-muted/20 px-3 py-2">
+                <p data-ui="instance-instance-content-tab-p-7" className="truncate text-sm font-medium text-foreground">{entry.name}</p>
+                <p data-ui="instance-instance-content-tab-p-8" className="mt-0.5 text-xs text-muted-foreground">{t(`builds.dropReject.${entry.reason}`)}</p>
               </div>
             ))}
           </div>
-          <div className="mt-3 flex justify-end">
-            <button
+          <div data-ui="instance-instance-content-tab-div-51" className="mt-3 flex justify-end">
+            <button data-ui="instance-instance-content-tab-button-11"
               type="button"
               onClick={() => setRejectedEntries([])}
               className="rounded-lg bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"

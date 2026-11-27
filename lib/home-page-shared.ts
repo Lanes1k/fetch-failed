@@ -1,6 +1,8 @@
 import type { CSSProperties } from "react"
 
-export type AccountWithAvatar = { uuid?: string; type?: string }
+import { URLS } from "@xnlc/urls/minecraft"
+
+export type AccountWithAvatar = { uuid?: string; type?: string; skinUrl?: string }
 export type LaunchPhase = "idle" | "installing" | "launching"
 export type LaunchUiState = {
   isLaunching: boolean
@@ -27,26 +29,15 @@ export const MOD_LOADERS = [
   { id: "optifine", name: "OptiFine", color: "bg-green-500" },
   { id: "instance", name: "Instance", color: "bg-blue-500" },
 ] as const
-export const NEWS_CARD_STYLE: CSSProperties = { contain: "fetch failed" }
-export const NEWS_SCROLL_STYLE: CSSProperties = { contain: "fetch failed", overscrollBehavior: "contain" }
+export const NEWS_CARD_STYLE: CSSProperties = { contain: "layout paint" }
+export const NEWS_SCROLL_STYLE: CSSProperties = { contain: "layout paint", overscrollBehavior: "contain" }
 export const NEWS_GRID_GAP = 12
 export const NEWS_CARD_TEXT_HEIGHT = 140
 export const NEWS_GRID_OVERSCAN_ROWS = 3
 export const LAUNCH_RE = /launching|starting|started|spawn|запуск/i
 
-/**
- * Игра реально поднялась: окно создано, звук и атласы инициализированы.
- * Раньше тут было `/render|game|world|player/i` — слишком широко, из-за чего
- * лаунчер объявлял «игра запущена», когда процесс только-только стартовал.
- */
-export const GAME_READY_RE = /Sound engine started|OpenAL initialized|Created: \d+x\d+x\d+ .*-atlas|Narrator library for .* successfully loaded/i
-
-/**
- * Страховка на случай нестандартной сборки, которая не печатает маркеры выше:
- * через это время живой процесс всё равно считается запущенной игрой, иначе
- * кнопка навсегда осталась бы в состоянии «Запускается...».
- */
-export const GAME_READY_FALLBACK_MS = 45_000
+// Интерфейс и RPC используют один критерий готовности игры.
+export { GAME_READY_RE, GAME_READY_FALLBACK_MS } from "@xnlc/core/game-readiness"
 export const INITIAL_LAUNCH_UI_STATE: LaunchUiState = {
   isLaunching: false,
   status: "",
@@ -60,26 +51,27 @@ export const INITIAL_LAUNCH_UI_STATE: LaunchUiState = {
 }
 export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   elyby: "Ely.By",
-  xnskins: "fetch failed",
-  xneon: "fetch failed",
+  xnskins: "XN Skins",
+  xneon: "XN Skins",
   microsoft: "Microsoft",
   offline: "Offline",
+  "authlib-injector": "Authlib-Injector",
 }
 
 type MojangManifestResponse = { versions?: Array<{ id: string; type: string }> }
-const MOJANG_VERSION_MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 
-export const getAvatarUrl = (account: AccountWithAvatar, username: string) => {
-  const isElyBy = account.type === "elyby"
-  const value = isElyBy ? username : (account.uuid || username)
+export const getAvatarUrl = (account: AccountWithAvatar, username: string, version?: number | string) => {
+  if (account.type === "offline" && !account.skinUrl) return "avatar://head/Steve"
+  const name = username || "Steve"
   const params = new URLSearchParams()
-  if (isElyBy) params.set("skin_type", "ely")
-  else if (account.type === "xnskins") params.set("skin_type", "xneon")
-  else if (account.type === "microsoft") params.set("skin_type", "microsoft")
-  else if (account.type === "offline") return "https://mcskinapi-three.vercel.app/avatar/Steve?skin_type=microsoft"
-  return params.has("skin_type")
-    ? `https://mcskinapi-three.vercel.app/avatar/${encodeURIComponent(value)}?${params.toString()}`
-    : `https://mcskinapi-three.vercel.app/avatar/${encodeURIComponent(value)}`
+  if (account.type) params.set("type", account.type)
+  if (account.uuid) params.set("uuid", account.uuid)
+  if (account.skinUrl) params.set("skin_url", account.skinUrl)
+  if (version !== undefined && version !== null && version !== "") {
+    params.set("v", String(version))
+  }
+  const qs = params.toString() ? `?${params.toString()}` : ""
+  return `avatar://head/${encodeURIComponent(name)}${qs}`
 }
 
 export function formatDate(raw: string) {
@@ -93,8 +85,8 @@ export function formatDate(raw: string) {
 export async function fetchVersionsFromRenderer(): Promise<MinecraftVersionOption[]> {
   // force-cache lets Chromium serve the manifest from its HTTP cache instead of
   // re-downloading it on every start when the IPC fallback path is used.
-  const response = await fetch(MOJANG_VERSION_MANIFEST_URL, { cache: "force-cache" })
-  if (!response.ok) throw new Error(`fetch failed${response.status}`)
+  const response = await fetch(URLS.official.mojang.versionManifestV2, { cache: "force-cache" })
+  if (!response.ok) throw new Error(`Failed to fetch Mojang manifest: ${response.status}`)
   const data = await response.json() as MojangManifestResponse
   return (data.versions ?? []).map((version) => ({
     version: version.id,

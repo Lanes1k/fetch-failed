@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
+import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
 import {
-  IconTerminal, IconPlayerPlay, IconPlayerStop, IconFolder, IconCopy,
-  IconDownload, IconTrash, IconX, IconMap, IconPuzzle,
+  IconTerminal2, IconPlayerPlay, IconPlayerStop, IconFolder, IconCopy,
+  IconDownload, IconTrash, IconMap, IconPuzzle,
   IconPlug, IconSettings, IconBug, IconCategoryPlus,
 } from "@tabler/icons-react"
-import { Checkbox } from "@/components/ui/checkbox"
+import { FloatingContextMenu } from "@/components/ui/floating-context-menu"
+import { ExportCategoriesDialog } from "../export-categories-dialog"
+import { InstanceExportModal } from "../instance/instance-export-modal"
 import type { McServerInfo } from "@xnlc/types"
 
 interface ServerContextMenuProps {
@@ -34,28 +37,6 @@ export function ServerContextMenu({ server, position, isRunning, isBusy, onConne
   const [duplicating, setDuplicating] = useState(false)
   const [exportDialogFor, setExportDialogFor] = useState(false)
   const [exportCategories, setExportCategories] = useState<Set<ServerExportCategory>>(() => new Set(["world", "mods", "plugins", "configs"]))
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  // Close when clicking / right-clicking anywhere outside the menu or on
-  // Escape — otherwise a second right-click on another server opens a second
-  // menu while the first one stays on screen.
-  useEffect(() => {
-    const outside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose()
-    }
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-    }
-    document.addEventListener("mousedown", outside)
-    document.addEventListener("contextmenu", outside)
-    document.addEventListener("keydown", key)
-    return () => {
-      document.removeEventListener("mousedown", outside)
-      document.removeEventListener("contextmenu", outside)
-      document.removeEventListener("keydown", key)
-    }
-  }, [onClose])
-
   const EXPORT_CATEGORIES: Array<{ id: ServerExportCategory; label: string; description: string; icon: React.ReactNode }> = [
     { id: "world", label: t("servers.export.world"), description: t("servers.export.worldDesc"), icon: <IconMap className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
     { id: "mods", label: t("servers.export.mods"), description: t("servers.export.modsDesc"), icon: <IconPuzzle className="h-5 w-5 text-muted-foreground" strokeWidth={1.75} /> },
@@ -77,130 +58,82 @@ export function ServerContextMenu({ server, position, isRunning, isBusy, onConne
 
   const handleExportZip = async () => {
     if (exporting) return
+    setExportDialogFor(false)
     setExporting(true)
     try {
-      await window.electronAPI?.mcServerExportZip(server.id, server.name, Array.from(exportCategories))
+      const result = await window.electrobunAPI?.mcServerExportZip(server.id, server.name, Array.from(exportCategories))
+      if (result && !result.success && result.error) console.warn("[Серверы] Экспорт zip не удался:", result.error)
     } finally {
       setExporting(false)
-      setExportDialogFor(false)
+      onClose()
     }
   }
 
-  return (
+  return createPortal(
     <>
-      <div
-        ref={menuRef}
-        className="fixed z-50 min-w-[180px] rounded-xl border border-border bg-card shadow-2xl p-1 animate-in fade-in-0 zoom-in-95 duration-150"
-        style={{ top: position.y, left: position.x }}
-        onClick={e => e.stopPropagation()}
-        onContextMenu={e => e.preventDefault()}
-      >
-        <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
+      {/* Пока открыт экспорт, outside-mousedown меню не должен размонтировать весь компонент. */}
+      {!exportDialogFor && !exporting && <FloatingContextMenu position={position} onClose={onClose}>
+        <button data-ui="server-server-context-menu-button-1" type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
           onClick={() => { onConnect(); onClose() }}>
-          <IconTerminal className="w-4 h-4 text-muted-foreground" />
+          <IconTerminal2 className="w-4 h-4 text-muted-foreground" />
           {t("servers.contextConnect")}
         </button>
-        <button type="button" disabled={isBusy}
+        <button data-ui="server-server-context-menu-button-2" type="button" disabled={isBusy || !!server.remote && !(isRunning ? server.remote.permissions.stop : server.remote.permissions.start)}
           className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground disabled:opacity-40"
           onClick={() => { onToggleRun(); onClose() }}>
           {isRunning ? <IconPlayerStop className="w-4 h-4 text-muted-foreground" /> : <IconPlayerPlay className="w-4 h-4 text-muted-foreground" />}
           {isRunning ? t("servers.contextStop") : t("servers.contextStart")}
         </button>
-        <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
-          onClick={() => { window.electronAPI?.mcServerOpenFolder(server.id); onClose() }}>
+        {!server.remote && <><button data-ui="server-server-context-menu-button-3" type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
+          onClick={() => { window.electrobunAPI?.mcServerOpenFolder(server.id); onClose() }}>
           <IconFolder className="w-4 h-4 text-muted-foreground" />
           {t("servers.contextOpenFolder")}
         </button>
-        <button type="button" disabled={duplicating}
+        <button data-ui="server-server-context-menu-button-4" type="button" disabled={duplicating}
           className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground disabled:opacity-40"
           onClick={() => { void handleDuplicate() }}>
           <IconCopy className="w-4 h-4 text-muted-foreground" />
           {t("servers.contextDuplicate")}
         </button>
-        <button type="button"
+        <button data-ui="server-server-context-menu-button-5" type="button"
           className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
-          onClick={() => setExportDialogFor(true)}>
+          onClick={() => { setExportCategories(new Set(["world", "mods", "plugins", "configs"])); setExportDialogFor(true) }}>
           <IconDownload className="w-4 h-4 text-muted-foreground" />
           {t("servers.contextExportZip")}
         </button>
-        {onOpenAssignGroup && (
-          <button type="button"
+        </>}
+        {!server.remote && onOpenAssignGroup && (
+          <button data-ui="server-server-context-menu-button-6" type="button"
             className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-muted text-foreground"
             onClick={() => { onOpenAssignGroup(position.x + 8, position.y + 8); onClose() }}>
             <IconCategoryPlus className="w-4 h-4 text-muted-foreground" />
             {t("categoryMenu.title")}
           </button>
         )}
-        <div className="mx-2 my-1 border-t border-border" />
-        <button type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-destructive/15 text-destructive"
+        <div data-ui="server-server-context-menu-div-2" className="mx-2 my-1 border-t border-border" />
+        <button data-ui="server-server-context-menu-button-7" type="button" className="flex items-center gap-2 w-full px-3 py-2 text-sm rounded-lg hover:bg-destructive/15 text-destructive"
           onClick={() => { onDelete(); onClose() }}>
           <IconTrash className="w-4 h-4" strokeWidth={1.75} />
-          {t("servers.contextDelete")}
+          {t(server.remote ? "remoteServer.leave" : "servers.contextDelete")}
         </button>
-      </div>
+      </FloatingContextMenu>}
 
-      {/* Export dialog — same layout as the instance export dialog */}
-      {exportDialogFor && (
-        <div className="fixed inset-0 z-[60] bg-background/60 backdrop-blur-sm flex items-center justify-center animate-in fade-in-0"
-          onClick={() => setExportDialogFor(false)}>
-          <div className="w-[420px] rounded-2xl border border-border bg-card p-5 shadow-2xl animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-base font-semibold text-foreground">{t("servers.export.title")}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {t("servers.export.desc", { name: server.name })}
-                </p>
-              </div>
-              <button type="button" onClick={() => setExportDialogFor(false)} className="p-1 rounded-md hover:bg-muted text-muted-foreground">
-                <IconX className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              {EXPORT_CATEGORIES.map(cat => (
-                <label key={cat.id} className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 px-3 py-2.5 cursor-pointer transition-colors hover:border-primary/40">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">{cat.icon}</span>
-                  <Checkbox
-                    checked={exportCategories.has(cat.id)}
-                    onCheckedChange={(checked) => {
-                      setExportCategories(prev => {
-                        const next = new Set(prev)
-                        if (checked) next.add(cat.id)
-                        else next.delete(cat.id)
-                        return next
-                      })
-                    }}
-                    className="mt-0.5"
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium text-foreground">{cat.label}</span>
-                    <span className="block text-xs text-muted-foreground">{cat.description}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-
-            <div className="mt-5 flex items-center justify-between gap-2">
-              <button type="button" onClick={() => setExportCategories(new Set(EXPORT_CATEGORIES.map(c => c.id)))}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted">
-                {t("servers.export.selectAll")}
-              </button>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setExportDialogFor(false)}
-                  className="px-4 py-2 rounded-xl text-sm font-medium hover:bg-muted text-muted-foreground">
-                  {t("servers.cancel")}
-                </button>
-                <button type="button" disabled={exportCategories.size === 0 || exporting}
-                  onClick={() => { void handleExportZip() }}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <IconDownload className={exporting ? "w-4 h-4 animate-pulse" : "w-4 h-4"} />
-                  {t("servers.export.action")}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {exportDialogFor && !exporting && (
+        <ExportCategoriesDialog
+          windowId="server-export-categories"
+          title={t("instanceList.exportZip")}
+          description={t("servers.export.desc", { name: server.name })}
+          categories={EXPORT_CATEGORIES}
+          selected={exportCategories}
+          onSelectedChange={setExportCategories}
+          onClose={onClose}
+          onExport={() => { void handleExportZip() }}
+          selectAllLabel={t("instanceList.selectAll")}
+          cancelLabel={t("common.cancel")}
+          exportLabel={t("instanceList.export")}
+        />
       )}
-    </>
+      {exporting && <InstanceExportModal buildName={server.name} current={null} total={null} />}
+    </>, document.body
   )
 }

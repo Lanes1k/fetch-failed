@@ -17,10 +17,11 @@ import { Downloader } from "../core/downloader.js";
 import { MetaClient } from "../core/meta-client.js";
 import { ensureDirSync, getLibraryDir, getVersionDir } from "../utils/index.js";
 import { URLS } from "../constants/urls.js";
+import { listArchiveEntries, readArchiveEntry, readArchiveEntryText } from "@xnlc/archives";
 import type { ILoaderHandler } from "./types.js";
+import { PROFILE_REVISION } from "../core/profile-builder.js";
 
-const OPTIFINE_BASE = URLS.official.optifine.root;
-const LAUNCHWRAPPER_URL = `${URLS.official.mojang.libraries}/net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar`;
+const launchwrapperUrl = () => `${URLS.official.mojang.libraries}/net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar`;
 const LAUNCHWRAPPER_PATH = "net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar";
 const MAIN_CLASS = "net.minecraft.launchwrapper.Launch";
 
@@ -61,15 +62,20 @@ export function parseOptifineFilename(name: string): Omit<OptifineVersion, "down
 export function optifineVersionId(mcVersion: string, filename: string): string {
   const parsed = parseOptifineFilename(filename);
   if (!parsed) {
-    throw new Error(`fetch failed${filename}`);
+    throw new Error(`Invalid OptiFine filename: ${filename}`);
   }
   if (parsed.mcVersion !== mcVersion) {
-    throw new Error(`fetch failed${mcVersion}fetch failed${parsed.mcVersion}`);
+    throw new Error(`OptiFine filename Minecraft mismatch: expected ${mcVersion}, got ${parsed.mcVersion}`);
   }
   return `${mcVersion}-OptiFine_${parsed.edition}_${parsed.release}`;
 }
 
 export class OptifineHandler implements ILoaderHandler {
+  private javaPath = "java";
+
+  setJavaPath(javaPath: string): void {
+    this.javaPath = javaPath;
+  }
   constructor(
     private downloader: Downloader,
     private metaClient: MetaClient,
@@ -87,7 +93,7 @@ export class OptifineHandler implements ILoaderHandler {
   async getSupportedVersions(): Promise<string[]> {
     const res = await fetch(URLS.official.optifine.downloads);
     if (!res.ok) {
-      throw new Error(`fetch failed${res.status}`);
+      throw new Error(`Failed to fetch OptiFine downloads: ${res.status}`);
     }
 
     const html = await res.text();
@@ -119,7 +125,7 @@ export class OptifineHandler implements ILoaderHandler {
   async getAllVersions(): Promise<OptifineVersion[]> {
     const res = await fetch(URLS.official.optifine.downloads);
     if (!res.ok) {
-      throw new Error(`fetch failed${res.status}`);
+      throw new Error(`Failed to fetch OptiFine downloads: ${res.status}`);
     }
 
     const html = await res.text();
@@ -138,7 +144,7 @@ export class OptifineHandler implements ILoaderHandler {
 
       versions.push({
         ...parsed,
-        downloadUrl: `${OPTIFINE_BASE}/download?f=${encodeURIComponent(raw)}`,
+        downloadUrl: `${URLS.official.optifine.root}/download?f=${encodeURIComponent(raw)}`,
       });
     }
 
@@ -148,7 +154,7 @@ export class OptifineHandler implements ILoaderHandler {
   async getOptifineVersions(mcVersion: string): Promise<OptifineVersion[]> {
     const res = await fetch(URLS.official.optifine.downloads);
     if (!res.ok) {
-      throw new Error(`fetch failed${res.status}`);
+      throw new Error(`Failed to fetch OptiFine downloads: ${res.status}`);
     }
 
     const html = await res.text();
@@ -167,7 +173,7 @@ export class OptifineHandler implements ILoaderHandler {
 
       versions.push({
         ...parsed,
-        downloadUrl: `${OPTIFINE_BASE}/download?f=${encodeURIComponent(raw)}`,
+        downloadUrl: `${URLS.official.optifine.root}/download?f=${encodeURIComponent(raw)}`,
       });
     }
 
@@ -245,7 +251,7 @@ export class OptifineHandler implements ILoaderHandler {
 
     const clientUrl = vanilla.downloads?.client?.url;
     if (!clientUrl) {
-      throw new Error(`fetch failed${mcVersion}`);
+      throw new Error(`No vanilla client download found for Minecraft ${mcVersion}`);
     }
 
     await this.downloader.download({
@@ -272,12 +278,12 @@ export class OptifineHandler implements ILoaderHandler {
     if (parsed && parsed.mcVersion === mcVersion) {
       return {
         ...parsed,
-        downloadUrl: `${OPTIFINE_BASE}/download?f=${encodeURIComponent(loaderVersion)}`,
+        downloadUrl: `${URLS.official.optifine.root}/download?f=${encodeURIComponent(loaderVersion)}`,
         launchWrapperVersion: undefined,
       };
     }
 
-    throw new Error(`fetch failed${mcVersion}: ${loaderVersion}`);
+    throw new Error(`OptiFine version not found for Minecraft ${mcVersion}: ${loaderVersion}`);
   }
 
   private async findVersion(
@@ -288,9 +294,6 @@ export class OptifineHandler implements ILoaderHandler {
   }
 
   private async extractBundledLaunchwrapper(installerJar: string, launchWrapperVersion?: string): Promise<void> {
-    const AdmZip = (await import("adm-zip/adm-zip.js")).default;
-    const zip = new AdmZip(installerJar);
-
     const bundleVersion = launchWrapperVersion?.trim();
     const candidates = bundleVersion
       ? [
@@ -303,7 +306,11 @@ export class OptifineHandler implements ILoaderHandler {
       "optifine/launchwrapper-of.jar",
     );
 
-    const entryName = candidates.find((name) => zip.getEntry(name));
+    // Установщик OptiFine — обычный ZIP: каталог читается без распаковки.
+    const names = new Set(
+      (await listArchiveEntries(installerJar)).filter((entry) => !entry.directory).map((entry) => entry.name),
+    );
+    const entryName = candidates.find((name) => names.has(name));
     if (!entryName) {
       return;
     }
@@ -314,26 +321,28 @@ export class OptifineHandler implements ILoaderHandler {
       ? path.join(getLibraryDir(this.gameDir), "optifine", "launchwrapper", resolvedVersion, `launchwrapper-${resolvedVersion}.jar`)
       : path.join(getLibraryDir(this.gameDir), LAUNCHWRAPPER_PATH);
 
-    ensureDirSync(path.dirname(dest));
-    if (!fs.existsSync(dest)) {
-      fs.writeFileSync(dest, zip.getEntry(entryName)!.getData());
-    }
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    if (await fs.promises.access(dest).then(() => true, () => false)) return;
+    const data = await readArchiveEntry(installerJar, entryName);
+    if (data) await fs.promises.writeFile(dest, data);
   }
 
   private async detectLaunchwrapperVersion(installerJar: string, fallback?: string): Promise<string | undefined> {
-    const AdmZip = (await import("adm-zip/adm-zip.js")).default;
-    const zip = new AdmZip(installerJar);
+    const names = (await listArchiveEntries(installerJar))
+      .filter((entry) => !entry.directory)
+      .map((entry) => entry.name);
 
-    const versionEntry = zip.getEntry("launchwrapper-of.txt") ?? zip.getEntry("optifine/launchwrapper-of.txt");
-    if (versionEntry) {
-      const version = zip.readAsText(versionEntry).trim();
+    const versionName = ["launchwrapper-of.txt", "optifine/launchwrapper-of.txt"]
+      .find((name) => names.includes(name));
+    if (versionName) {
+      const version = (await readArchiveEntryText(installerJar, versionName))?.trim();
       if (version) {
         return version;
       }
     }
 
-    const bundledJar = zip.getEntries().find((entry) => /(?:^|\/)launchwrapper-of-[^.]+\.jar$/.test(entry.entryName));
-    const versionFromEntry = bundledJar?.entryName.match(/launchwrapper-of-([^.]+)\.jar$/)?.[1]?.trim();
+    const bundledJar = names.find((name) => /(?:^|\/)launchwrapper-of-[^.]+\.jar$/.test(name));
+    const versionFromEntry = bundledJar?.match(/launchwrapper-of-([^.]+)\.jar$/)?.[1]?.trim();
     return versionFromEntry || fallback;
   }
 
@@ -348,6 +357,8 @@ export class OptifineHandler implements ILoaderHandler {
       inheritsFrom: info.mcVersion,
       mainClass: MAIN_CLASS,
       jar: id,
+      xnlcJarIsOverlay: true,
+      xnlcProfileRevision: PROFILE_REVISION,
       type: "release",
       javaVersion: isLegacy
         ? { component: "jre-legacy", majorVersion: 8 }
@@ -389,7 +400,7 @@ export class OptifineHandler implements ILoaderHandler {
         name: "net.minecraft:launchwrapper:1.12",
         downloads: {
           artifact: {
-            url: LAUNCHWRAPPER_URL,
+            url: launchwrapperUrl(),
             path: LAUNCHWRAPPER_PATH,
             sha1: "",
             size: 0,
@@ -402,7 +413,7 @@ export class OptifineHandler implements ILoaderHandler {
       name: `optifine:launchwrapper:${launchWrapperVersion}`,
       downloads: {
         artifact: {
-          url: LAUNCHWRAPPER_URL,
+          url: launchwrapperUrl(),
           path: path.join("optifine", "launchwrapper", launchWrapperVersion, `launchwrapper-${launchWrapperVersion}.jar`),
           sha1: "",
           size: 0,
@@ -416,7 +427,7 @@ export class OptifineHandler implements ILoaderHandler {
       return;
     }
 
-    const javaPath = "java";
+    const javaPath = this.javaPath;
     execFileSync(javaPath, [
       "-cp",
       installerJar,
@@ -430,7 +441,7 @@ export class OptifineHandler implements ILoaderHandler {
     });
 
     if (!fs.existsSync(outputJar)) {
-      throw new Error("fetch failed");
+      throw new Error("OptiFine patcher completed but output jar was not created");
     }
   }
 }

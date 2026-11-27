@@ -43,7 +43,7 @@ export class AssetsManager {
   private async ensureAssetIndex(versionJson: VersionJson, gameDir: string): Promise<{ assetIndex: NonNullable<VersionJson["assetIndex"]>; indexDest: string; indexData: AssetIndex; hadIndexFile: boolean }> {
     const { assetIndex } = versionJson;
     if (!assetIndex) {
-      throw new Error("fetch failed");
+      throw new Error("No asset index in version JSON");
     }
 
     const indexDest = path.join(getAssetIndexDir(gameDir), `${assetIndex.id}.json`);
@@ -68,7 +68,7 @@ export class AssetsManager {
     }
 
     if (!fs.existsSync(indexDest)) {
-      throw new Error(`fetch failed${indexDest}`);
+      throw new Error(`Asset index file not found after download: ${indexDest}`);
     }
     const indexData = JSON.parse(fs.readFileSync(indexDest, "utf-8")) as AssetIndex;
     return { assetIndex, indexDest, indexData, hadIndexFile };
@@ -104,6 +104,7 @@ export class AssetsManager {
     versionJson: VersionJson,
     gameDir: string,
     onProgress?: DownloadProgressCallback,
+    instanceDir = gameDir,
   ): Promise<void> {
     const { assetIndex } = versionJson;
     if (!assetIndex) return;
@@ -144,6 +145,20 @@ export class AssetsManager {
     // countAssets/countTotalSize посчитают их отсутствующими.
     for (const item of items) {
       this.readyCache.set(item.dest, true);
+    }
+    // До 1.7 игра читает файлы по именам, а не объекты по хэшам.
+    const roots: string[] = [];
+    if (indexData.virtual) roots.push(path.join(gameDir, "assets", "virtual", assetIndex.id));
+    if (indexData.map_to_resources || assetIndex.id === "pre-1.6") roots.push(path.join(instanceDir, "resources"));
+    for (const root of roots) {
+      for (const [name, entry] of Object.entries(indexData.objects)) {
+        const destination = path.resolve(root, name);
+        const relative = path.relative(root, destination);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Invalid asset path: ${name}`);
+        if (fs.existsSync(destination) && fs.statSync(destination).size === entry.size) continue;
+        ensureDirSync(path.dirname(destination));
+        fs.copyFileSync(this.getAssetObjectPath(gameDir, entry.hash), destination);
+      }
     }
   }
 

@@ -12,8 +12,8 @@
 import { fetchWithRetry } from "@xnlc/core/retry"
 import type { LabyApiError } from "@xnlc/types"
 
-const BROWSER_UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+declare const XNLC_APPLICATION_USER_AGENT: string | undefined
+const USER_AGENT = typeof XNLC_APPLICATION_USER_AGENT === "string" ? XNLC_APPLICATION_USER_AGENT : "xnlc-skins"
 
 const ATTEMPTS = 3
 const RETRY_DELAY_MS = 800
@@ -31,15 +31,15 @@ export class LabyRequestError extends Error {
 
 /** Код ответа (или сеть) в модель ошибки, которую показывает UI. */
 export function describeLabyError(error: unknown, status?: number): LabyApiError {
-  if (status === 429) return { code: "rate_limited", message: "fetch failed", retryable: true }
-  if (status === 404) return { code: "not_found", message: "fetch failed", retryable: false }
-  if (status === 400) return { code: "bad_request", message: "fetch failed", retryable: false }
-  if (status === 401 || status === 403) return { code: "forbidden", message: "fetch failed", retryable: false }
-  if (status && status >= 500) return { code: "server_error", message: "fetch failed", retryable: true }
-  if (status) return { code: `http_${status}`, message: `fetch failed${status}`, retryable: status >= 500 }
+  if (status === 429) return { code: "rate_limited", message: "Laby ограничил частоту запросов", retryable: true }
+  if (status === 404) return { code: "not_found", message: "Скин не найден в Laby", retryable: false }
+  if (status === 400) return { code: "bad_request", message: "Laby отклонил запрос", retryable: false }
+  if (status === 401 || status === 403) return { code: "forbidden", message: "Laby закрыл доступ", retryable: false }
+  if (status && status >= 500) return { code: "server_error", message: "Laby временно недоступен", retryable: true }
+  if (status) return { code: `http_${status}`, message: `Laby ответил кодом ${status}`, retryable: status >= 500 }
   const message = error instanceof Error ? error.message : String(error)
-  if (/abort/i.test(message)) return { code: "aborted", message: "fetch failed", retryable: true }
-  return { code: "network", message: "fetch failed", retryable: true }
+  if (/abort/i.test(message)) return { code: "aborted", message: "Запрос отменён", retryable: true }
+  return { code: "network", message: "Нет связи с Laby", retryable: true }
 }
 
 /** Ошибку любого вида приводит к модели `LabyApiError`. */
@@ -60,7 +60,7 @@ export class LabyClient {
       try {
         const res = await fetchWithRetry(
           url,
-          { headers: { Accept: "application/json", "User-Agent": BROWSER_UA }, signal },
+          { headers: { Accept: "application/json", "User-Agent": USER_AGENT }, signal },
           { retries: 1 },
         )
         if (res.ok) return (await res.json()) as T
@@ -83,7 +83,7 @@ export class LabyClient {
   /** Скачивание текстуры: без повторов, результат проверяет вызывающая сторона. */
   async texture(url: string): Promise<Uint8Array | null> {
     try {
-      const res = await fetchWithRetry(url, { headers: { Accept: "image/png", "User-Agent": BROWSER_UA } }, { retries: 2 })
+      const res = await fetchWithRetry(url, { headers: { Accept: "image/png", "User-Agent": USER_AGENT } }, { retries: 2 })
       if (!res.ok) return null
       return new Uint8Array(await res.arrayBuffer())
     } catch {

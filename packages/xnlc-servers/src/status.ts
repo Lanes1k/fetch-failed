@@ -112,7 +112,7 @@ function readVarInt(buffer: Buffer, offset: number): { value: number; newOffset:
     }
     shift += 7
     if (shift > 35) {
-      throw new Error("fetch failed")
+      throw new Error("VarInt is too big")
     }
   }
 
@@ -190,7 +190,7 @@ const PROTOCOL_VERSION_NAMES: Record<number, string> = {
 }
 
 function getProtocolVersionName(protocol: number): string {
-  return PROTOCOL_VERSION_NAMES[protocol] || `fetch failed${protocol})`
+  return PROTOCOL_VERSION_NAMES[protocol] || `Неизвестная (${protocol})`
 }
 
 /** Убирает §-коды форматирования из строки версии. */
@@ -217,7 +217,7 @@ function resolveVersionName(version?: { name?: string; protocol?: number }): str
   if (byProtocol) return byProtocol
   if (reported) return reported
   if (protocol) return getProtocolVersionName(protocol)
-  return "fetch failed"
+  return "Неизвестная"
 }
 
 // ── SRV lookup ────────────────────────────────────────────
@@ -283,7 +283,7 @@ export async function pingServer(input: string): Promise<ServerStatusResult> {
     socket.setTimeout(DEFAULT_TIMEOUT)
 
     socket.on("timeout", () => {
-      finish(createOfflineResult(host, inputPort, "fetch failed"))
+      finish(createOfflineResult(host, inputPort, "Connection timed out"))
     })
 
     socket.on("error", (err: Error) => {
@@ -377,14 +377,14 @@ export async function pingServer(input: string): Promise<ServerStatusResult> {
           }
         }
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "fetch failed"
+        const message = err instanceof Error ? err.message : "Parse error"
         finish(createOfflineResult(host, inputPort, message))
       }
     })
 
     socket.on("close", () => {
       if (!resolved) {
-        finish(createOfflineResult(host, inputPort, "fetch failed"))
+        finish(createOfflineResult(host, inputPort, "Connection closed"))
       }
     })
 

@@ -1,28 +1,25 @@
+import { useContentEnter } from "../content-motion"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useAccounts } from "@/src/AccountsContext"
 import { useActivityCenter } from "@/src/ActivityCenterContext"
 import { LabyPanel } from "./laby-panel"
 import { CatalogCard } from "./catalog-card"
+import { SKIN_GRID_CLASS } from "../skins/skin-grid-layout"
 import { CatalogToolbar } from "./catalog-toolbar"
 import { PlayerHeader } from "./player-header"
 import { Spinner } from "@/components/launcher/instance/spinner"
 import { EMPTY_FILTERS, countActiveFilters, type CatalogFilters } from "./catalog-filters-dialog"
-import { LABY_DEFAULT_ORDER, labyHashFromSourceId, labyPlayerSkinToSkin } from "@xnlc/skins"
+import { LABY_DEFAULT_ORDER, labyHashFromSourceId, labyPlayerSkinToSkin } from "@xnlc/skins/browser"
 import type { LabyOrder, LabyPlayer, LabySkin, LabyTag } from "@xnlc/types"
 import { IconAlertTriangle, IconChevronLeft, IconChevronRight, IconLayoutGrid, IconRefresh, IconUsers } from "@tabler/icons-react"
+import { ActionConfirmDialog } from "@/components/launcher/instance/action-confirm-dialog"
 
-/**
- * Плотность сетки считается по ширине КОНТЕЙНЕРА, а не окна: сетка живёт в
- * правой колонке, поэтому оконные пороги не срабатывали.
- */
-const GRID_CLASS =
-  "grid w-full grid-cols-2 gap-2.5 @[400px]:grid-cols-3 @[620px]:grid-cols-4 @[820px]:grid-cols-5 @[1040px]:grid-cols-6"
+const GRID_CLASS = SKIN_GRID_CLASS
 
 /** Пауза перед локальным поиском: пользователь ещё печатает. */
 const SEARCH_DEBOUNCE_MS = 400
 
-const PAGE_SIZE = 25
 
 function SectionHeader({
   icon,
@@ -38,18 +35,18 @@ function SectionHeader({
   trailing?: React.ReactNode
 }) {
   return (
-    <div className="flex items-center gap-2.5">
-      <div className="grid size-7 shrink-0 place-items-center rounded-lg border border-primary/10 bg-primary/10">
+    <div data-ui="laby-library-tab-div-1" data-component="section-header" className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
+      <div data-ui="laby-library-tab-div-2" className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10">
         {icon}
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
-          <h3 className="text-[13px] font-semibold text-foreground">{title}</h3>
+      <div data-ui="laby-library-tab-div-3" className="min-w-0 flex-1">
+        <div data-ui="laby-library-tab-div-4" className="flex items-baseline gap-2">
+          <h3 data-ui="laby-library-tab-h3-1" className="text-[13px] font-semibold text-foreground">{title}</h3>
           {count !== undefined && (
-            <span className="text-[11px] font-medium tabular-nums text-muted-foreground/50">{count}</span>
+            <span data-ui="laby-library-tab-span-1" className="text-[11px] font-medium tabular-nums text-muted-foreground/50">{count}</span>
           )}
         </div>
-        {hint && <p className="truncate text-[11px] text-muted-foreground/50">{hint}</p>}
+        {hint && <p data-ui="laby-library-tab-p-1" className="text-xs leading-relaxed text-muted-foreground">{hint}</p>}
       </div>
       {trailing}
     </div>
@@ -69,13 +66,13 @@ function SectionHeader({
  */
 export function LabyLibraryTab() {
   const { t, i18n } = useTranslation()
-  const { accounts, activeAccount } = useAccounts()
+  const { accounts, activeAccount, bumpAvatarVersion, reloadAccounts } = useAccounts()
   const { pushNotification } = useActivityCenter()
 
-  const account = activeAccount ?? accounts[0]
+  const skinAccounts = useMemo(() => accounts.filter((a) => a.type !== "elyby" && a.type !== "offline"), [accounts])
+  const account = (activeAccount && activeAccount.type !== "elyby" && activeAccount.type !== "offline" ? activeAccount : skinAccounts[0]) ?? null
   const accountId = account?.id
-  /** Скины Minecraft Services есть только у аккаунтов Microsoft. */
-  const canApply = account?.type === "microsoft"
+  const canApply = Boolean(account)
 
   const [items, setItems] = useState<LabySkin[]>([])
   const [page, setPage] = useState(0)
@@ -112,6 +109,7 @@ export function LabyLibraryTab() {
   // Игрок по введённому тексту: находится автоматически вместе с фильтром каталога.
   const [player, setPlayer] = useState<LabyPlayer | null>(null)
   const [playerLoading, setPlayerLoading] = useState(false)
+  const contentEnter = useContentEnter(!loading && !playerLoading)
 
   /**
    * Что из каталога уже лежит в «Избранном»: хэш → id записи в библиотеке.
@@ -119,8 +117,35 @@ export function LabyLibraryTab() {
    */
   const [favorites, setFavorites] = useState<Map<string, string>>(new Map())
   const [busy, setBusy] = useState<{ hash: string; mode: "save" | "apply" | "remove" } | null>(null)
+  const [pendingRemove, setPendingRemove] = useState<LabySkin | null>(null)
 
   const gridRef = useRef<HTMLDivElement>(null)
+  const [pageSize, setPageSize] = useState(24)
+  useEffect(() => {
+    const container = gridRef.current
+    if (!container) return
+    let timer: ReturnType<typeof setTimeout>
+    const measure = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        const bounds = container.getBoundingClientRect()
+        const gap = parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.625
+        const width = Math.max(1, container.clientWidth - 8)
+        const columns = Math.max(1, Math.floor((width + gap) / (180 + gap)))
+        const cardHeight = (width - (columns - 1) * gap) / columns * 40 / 31
+        const height = Math.max(cardHeight, window.innerHeight - bounds.top - 140)
+        const rows = Math.max(1, Math.floor((height + gap) / (cardHeight + gap)))
+        const count = columns * Math.min(Math.max(rows, Math.ceil(6 / columns)), Math.max(1, Math.floor(100 / columns)))
+        setPageSize(count)
+      }, 150)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(container)
+    window.addEventListener("resize", measure)
+    measure()
+    return () => { clearTimeout(timer); observer.disconnect(); window.removeEventListener("resize", measure) }
+  }, [])
+
   /** Защита от гонки: ответ устаревшего запроса не должен перезаписать свежий. */
   const requestIdRef = useRef(0)
 
@@ -142,14 +167,14 @@ export function LabyLibraryTab() {
   useEffect(() => {
     const username = query.trim()
     // Ник — латиница, цифры, подчёркивание и точка; короче трёх символов не ищем.
-    if (!window.electronAPI || username.length < 3 || !/^[A-Za-z0-9_.]+$/.test(username)) {
+    if (!window.electrobunAPI || username.length < 3 || !/^[A-Za-z0-9_.]+$/.test(username)) {
       setPlayer(null)
       setPlayerLoading(false)
       return
     }
     let cancelled = false
     setPlayerLoading(true)
-    window.electronAPI
+    window.electrobunAPI
       .labyPlayer(username)
       .then((result) => {
         if (!cancelled) setPlayer(result)
@@ -165,16 +190,18 @@ export function LabyLibraryTab() {
     }
   }, [query])
 
+  useEffect(() => { setPage(0) }, [pageSize])
+
   const loadPage = useCallback(
     async (targetPage: number, targetOrder: LabyOrder, targetFilters: CatalogFilters, targetQuery: string) => {
-      if (!window.electronAPI) return
+      if (!window.electrobunAPI) return
       const requestId = requestIdRef.current + 1
       requestIdRef.current = requestId
       setLoading(true)
       try {
-        const result = await window.electronAPI.labyCatalog(
+        const result = await window.electrobunAPI.labyCatalog(
           targetPage,
-          PAGE_SIZE,
+          pageSize,
           targetOrder,
           targetFilters.tags,
           targetQuery || null,
@@ -197,7 +224,7 @@ export function LabyLibraryTab() {
         if (requestIdRef.current === requestId) setLoading(false)
       }
     },
-    [],
+    [pageSize],
   )
 
   useEffect(() => {
@@ -207,9 +234,9 @@ export function LabyLibraryTab() {
   // Теги Laby — единственный серверный источник категорий.
   useEffect(() => {
     let cancelled = false
-    if (!window.electronAPI) return
+    if (!window.electrobunAPI) return
     setTagsLoading(true)
-    window.electronAPI
+    window.electrobunAPI
       .labyTags(i18n.language)
       .then((result) => {
         if (!cancelled) setTags(result)
@@ -226,11 +253,11 @@ export function LabyLibraryTab() {
   // Что из каталога уже лежит в «Избранном» — по sourceId из базы.
   useEffect(() => {
     let cancelled = false
-    if (!accountId || !window.electronAPI) {
+    if (!accountId || !window.electrobunAPI) {
       setFavorites(new Map())
       return
     }
-    window.electronAPI
+    window.electrobunAPI
       .skinsListLibrary(accountId)
       .then((skins) => {
         if (cancelled) return
@@ -250,13 +277,13 @@ export function LabyLibraryTab() {
 
   // Похожие скины для выбранного: Laby такого эндпоинта не даёт, считает main.
   useEffect(() => {
-    if (!selected || !window.electronAPI) {
+    if (!selected || !window.electrobunAPI) {
       setSimilar([])
       return
     }
     let cancelled = false
     setSimilarLoading(true)
-    window.electronAPI
+    window.electrobunAPI
       .labySimilar(selected.hash, selected.tags, selected.slim)
       .then((result) => {
         if (!cancelled) setSimilar(result)
@@ -274,7 +301,7 @@ export function LabyLibraryTab() {
 
   const runAction = useCallback(
     async (skin: LabySkin, mode: "save" | "apply" | "remove") => {
-      if (!accountId || !window.electronAPI) return
+      if (!accountId || !window.electrobunAPI) return
       if (mode === "apply" && !canApply) return
 
       // Снять с избранного можно только то, что там лежит.
@@ -284,12 +311,12 @@ export function LabyLibraryTab() {
       setBusy({ hash: skin.hash, mode })
       try {
         if (mode === "remove" && librarySkinId) {
-          const ok = await window.electronAPI.skinsDeleteFromLibrary(librarySkinId)
+          const ok = await window.electrobunAPI.skinsDeleteFromLibrary(librarySkinId)
           if (!ok) {
             pushNotification({
               kind: "error",
               source: "import",
-              title: t("laby.removeFailed", "fetch failed"),
+              title: t("laby.removeFailed", "Не удалось убрать скин из избранного"),
               message: skin.name,
             })
             return
@@ -299,15 +326,10 @@ export function LabyLibraryTab() {
             next.delete(skin.hash)
             return next
           })
-          // Если сняли именно надетый скин, локальная метка «надет» больше не
-          // действительна — иначе «Избранное» выберет несуществующую запись.
-          if (localStorage.getItem(`skin-equipped-${accountId}`) === librarySkinId) {
-            localStorage.removeItem(`skin-equipped-${accountId}`)
-          }
           pushNotification({
             kind: "success",
             source: "import",
-            title: t("laby.removed", "fetch failed"),
+            title: t("laby.removed", "Скин убран из избранного"),
             message: skin.name,
           })
           return
@@ -317,14 +339,14 @@ export function LabyLibraryTab() {
 // определить slim по метаданным там было бы неоткуда.
         const result =
           mode === "apply"
-            ? await window.electronAPI.labyApply(skin.hash, accountId, skin.name, skin.slim)
-            : await window.electronAPI.labySaveToLibrary(skin.hash, accountId, skin.name, skin.slim)
+            ? await window.electrobunAPI.labyApply(skin.hash, accountId, skin.name, skin.slim)
+            : await window.electrobunAPI.labySaveToLibrary(skin.hash, accountId, skin.name, skin.slim)
 
         if (!result.saved) {
           pushNotification({
             kind: "error",
             source: "import",
-            title: t("laby.importFailed", "fetch failed"),
+            title: t("laby.importFailed", "Не удалось получить текстуру"),
             message: skin.name,
           })
           return
@@ -341,18 +363,23 @@ export function LabyLibraryTab() {
 
         if (mode === "apply") {
           if (result.applied) {
-            if (result.librarySkinId) localStorage.setItem(`skin-equipped-${accountId}`, result.librarySkinId)
+            const targetAcc = accounts.find((a) => a.id === accountId)
+            await window.electrobunAPI.avatarInvalidateCache?.({ username: targetAcc?.username, uuid: targetAcc?.uuid, type: targetAcc?.type })
+            // Ссылка на активную текстуру обновилась в main — перечитываем
+            // аккаунты, чтобы аватар показал новый скин.
+            await reloadAccounts()
+            bumpAvatarVersion()
             pushNotification({
               kind: "success",
               source: "launch",
-              title: t("laby.applied", "fetch failed"),
+              title: t("laby.applied", "Скин надет и добавлен в избранное"),
               message: skin.name,
             })
           } else {
             pushNotification({
               kind: "error",
               source: "launch",
-              title: t("laby.applyFailed", "fetch failed"),
+              title: t("laby.applyFailed", "Скин сохранён, но надеть не удалось"),
               message: skin.name,
             })
           }
@@ -362,14 +389,14 @@ export function LabyLibraryTab() {
         pushNotification({
           kind: "success",
           source: "import",
-          title: t("laby.added", "fetch failed"),
+          title: t("laby.added", "Скин добавлен в избранное"),
           message: skin.name,
         })
       } catch (err) {
         pushNotification({
           kind: "error",
           source: "import",
-          title: t("laby.error", "fetch failed"),
+          title: t("laby.error", "Каталог Laby недоступен"),
           message: String(err),
         })
       } finally {
@@ -416,12 +443,12 @@ export function LabyLibraryTab() {
    */
   const catalogHint =
     filters.tags.length > 0 && !filteredLocally
-      ? t("laby.catalogTagHint", "fetch failed", {
+      ? t("laby.catalogTagHint", "Скины Laby с тегом {{tags}}, страница за страницей", {
           tags: filters.tags.map((tag) => `#${tag}`).join(", "),
         })
       : filteredLocally
-        ? t("laby.catalogFilteredHint", "fetch failed")
-        : t("laby.catalogHint", "fetch failed")
+        ? t("laby.catalogFilteredHint", "Фильтр по загруженному каталогу Laby")
+        : t("laby.catalogHint", "Скины из открытого API Laby, страница за страницей")
 
   /**
    * Показывать ли загрузку по центру.
@@ -443,14 +470,14 @@ export function LabyLibraryTab() {
         busy={busy && busy.hash === skin.hash ? busy.mode : null}
         onSelect={() => setSelected(skin)}
         onSave={() => void runAction(skin, "save")}
-        onRemove={() => void runAction(skin, "remove")}
+        onRemove={() => setPendingRemove(skin)}
         onApply={() => void runAction(skin, "apply")}
       />
     ))
 
   return (
-    <div className="@container flex min-h-0 flex-1 flex-col">
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 @[820px]:grid-cols-[280px_minmax(0,1fr)] @[820px]:overflow-hidden">
+    <div data-ui="laby-library-tab-div-5" data-component="laby-library-tab" className="@container flex min-h-0 min-w-0 flex-1 flex-col">
+      <div data-ui="laby-library-tab-div-6" className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-4 overflow-y-auto pr-1 @[820px]:grid-cols-[280px_minmax(0,1fr)] @[820px]:gap-x-2 @[820px]:overflow-hidden">
         <LabyPanel
           skin={selected}
           inFavorites={selected ? favorites.has(selected.hash) : false}
@@ -459,12 +486,12 @@ export function LabyLibraryTab() {
           similar={similar}
           similarLoading={similarLoading}
           onSave={() => selected && void runAction(selected, "save")}
-          onRemove={() => selected && void runAction(selected, "remove")}
+          onRemove={() => selected && setPendingRemove(selected)}
           onApply={() => selected && void runAction(selected, "apply")}
           onSelectSimilar={setSelected}
         />
 
-        <div className="flex min-h-0 flex-col gap-3 @[820px]:overflow-hidden">
+        <div data-ui="laby-library-tab-div-7" className="flex min-h-0 min-w-0 flex-col gap-3 @[820px]:overflow-hidden">
           <CatalogToolbar
             query={queryInput}
             onQueryChange={setQueryInput}
@@ -478,25 +505,25 @@ export function LabyLibraryTab() {
             localFiltering={filteredLocally}
           />
 
-          <div ref={gridRef} className="@container min-h-0 @[820px]:flex-1 @[820px]:overflow-y-auto @[820px]:pr-1">
-            <div className="flex flex-col gap-4 pb-2">
+          <div data-ui="laby-library-tab-div-8" ref={gridRef} className={`@container min-h-0 min-w-0 @[820px]:flex-1 @[820px]:overflow-y-auto @[820px]:px-1 ${contentEnter ?? ""}`}>
+            <div data-ui="laby-library-tab-div-9" className="flex flex-col gap-4 pb-2">
               {/* Laby недоступен: показываем сохранённые данные, а не пустой экран. */}
               {error && (
-                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5">
-                  <IconAlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
-                  <p className="min-w-0 flex-1 text-[12px] text-amber-200/90">
+                <div data-ui="laby-library-tab-div-10" className="flex flex-wrap items-center gap-3 rounded-2xl border border-warning/25 bg-warning/10 px-3 py-2.5">
+                  <IconAlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+                  <p data-ui="laby-library-tab-p-2" className="min-w-0 flex-1 text-[12px] text-warning/90">
                     {stale
-                      ? t("laby.offlineNotice", "fetch failed")
+                      ? t("laby.offlineNotice", "Не удалось обновить каталог. Показаны сохранённые данные.")
                       : error.message}
                   </p>
                   {error.retryable && (
-                    <button
+                    <button data-ui="laby-library-tab-button-1"
                       type="button"
                       onClick={() => void loadPage(page, order, filters, query)}
-                      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-500/30 px-2.5 py-1 text-[11px] font-medium text-amber-200 transition-colors hover:bg-amber-500/15"
+                      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-warning/30 px-2.5 py-1 text-[11px] font-medium text-warning transition-colors hover:bg-warning/15"
                     >
                       <IconRefresh className="h-3.5 w-3.5" />
-                      {t("laby.retry", "fetch failed")}
+                      {t("laby.retry", "Повторить")}
                     </button>
                   )}
                 </div>
@@ -507,26 +534,25 @@ export function LabyLibraryTab() {
                 быть обычным тегом, и сообщение «игрок не найден» только мешало бы.
               */}
               {player && (
-                <section className="flex flex-col gap-2.5">
+                <section data-ui="laby-library-tab-section-1" className="flex flex-col gap-2.5">
                   <PlayerHeader player={player} />
                   <SectionHeader
                     icon={<IconUsers className="h-3.5 w-3.5 text-primary/70" />}
-                    title={t("laby.playerSkins", "fetch failed")}
-                    hint={t("laby.playerSkinsHint", "fetch failed")}
+                    title={t("laby.playerSkins", "Скины игрока")}
+                    hint={t("laby.playerSkinsHint", "Вся история скинов, которую видел Laby")}
                     count={playerSkins.length}
                   />
-                  <div className={GRID_CLASS}>
+                  <div data-ui="laby-library-tab-div-11" className={GRID_CLASS}>
                     {playerSkins.length > 0 ? renderCards(playerSkins) : null}
                   </div>
                 </section>
               )}
 
-              <section className="flex flex-col gap-2.5">
+              <section data-ui="laby-library-tab-section-2" className="flex flex-col gap-2.5">
                 <SectionHeader
                   icon={<IconLayoutGrid className="h-3.5 w-3.5 text-primary/70" />}
-                  title={t("laby.catalog", "fetch failed")}
+                  title={t("laby.catalog", "Каталог")}
                   hint={catalogHint}
-                  count={showLoader ? undefined : items.length}
                 />
 
                 {/*
@@ -537,14 +563,14 @@ export function LabyLibraryTab() {
                 {showLoader ? (
                   <Spinner />
                 ) : (
-                  <div className={GRID_CLASS}>
+                  <div data-ui="laby-library-tab-div-12" className={GRID_CLASS}>
                     {nothingFound ? (
-                      <p className="col-span-full py-6 text-center text-[12px] text-muted-foreground/60">
+                      <p data-ui="laby-library-tab-p-3" className="col-span-full py-6 text-center text-[12px] text-muted-foreground/60">
                         {endOfFeed
-                          ? t("laby.endOfList", "fetch failed")
+                          ? t("laby.endOfList", "Дальше скинов нет — вернитесь на предыдущую страницу")
                           : activeFilters > 0 || query
-                            ? t("laby.noMatches", "fetch failed")
-                            : t("laby.empty", "fetch failed")}
+                            ? t("laby.noMatches", "Под выбранные фильтры ничего не подошло")
+                            : t("laby.empty", "Каталог вернул пустой список — попробуйте обновить")}
                       </p>
                     ) : (
                       renderCards(items)
@@ -557,28 +583,28 @@ export function LabyLibraryTab() {
                     Вперёд пускаем, пока сервер отдаёт полные страницы, назад —
                     пока не дошли до начала. */}
                 {(hasMore || page > 0) && (
-                  <div className="flex items-center justify-center gap-2 pt-1">
-                    <button
+                  <div data-ui="laby-library-tab-div-13" className="flex items-center justify-center gap-2 pt-1">
+                    <button data-ui="laby-library-tab-button-2"
                       type="button"
                       onClick={() => changePage(page - 1)}
                       disabled={page === 0 || loading}
-                      title={t("laby.prevPage", "fetch failed")}
+                      title={t("laby.prevPage", "Предыдущая страница")}
                       className="flex h-9 items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-40"
                     >
                       <IconChevronLeft className="h-4 w-4" />
-                      {t("laby.prevPage", "fetch failed")}
+                      {t("laby.prevPage", "Предыдущая страница")}
                     </button>
                     {/* «Вперёд» прячем, когда упёрлись в конец: жать её бессмысленно,
                         а неактивная кнопка только сбивает с толку. */}
                     {!endOfFeed && (
-                      <button
+                      <button data-ui="laby-library-tab-button-3"
                         type="button"
                         onClick={() => changePage(page + 1)}
                         disabled={!hasMore || loading}
-                        title={t("laby.nextPage", "fetch failed")}
+                        title={t("laby.nextPage", "Следующая страница")}
                         className="flex h-9 items-center gap-1.5 rounded-xl bg-primary px-3.5 text-[12px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
                       >
-                        {t("laby.nextPage", "fetch failed")}
+                        {t("laby.nextPage", "Следующая страница")}
                         <IconChevronRight className="h-4 w-4" />
                       </button>
                     )}
@@ -589,6 +615,19 @@ export function LabyLibraryTab() {
           </div>
         </div>
       </div>
+      <ActionConfirmDialog
+        open={pendingRemove !== null}
+        onClose={() => setPendingRemove(null)}
+        onConfirm={() => {
+          if (pendingRemove) void runAction(pendingRemove, "remove")
+        }}
+        title={t("skins.deleteConfirmTitle")}
+        description={t("skins.deleteConfirm", { name: pendingRemove?.name ?? "" })}
+        confirmText={t("common.delete")}
+        cancelText={t("common.cancel")}
+        variant="danger"
+        icon="warning"
+      />
     </div>
   )
 }

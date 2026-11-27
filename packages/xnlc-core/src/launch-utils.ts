@@ -1,6 +1,11 @@
-import { existsSync, mkdirSync, statSync, writeFileSync } from "fs";
+declare const XNLC_APPLICATION_USER_AGENT: string | undefined
+const XNLC_USER_AGENT = typeof XNLC_APPLICATION_USER_AGENT === "string" ? XNLC_APPLICATION_USER_AGENT : "xnlc-core"
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { createHash } from "node:crypto";
 import path from "path";
 import { AuthManager } from "./auth/auth-manager.js";
+import { getAuthlibInjectorAllowedHosts } from "./config.js";
+import { URLS } from "./constants/urls.js";
 import type {
   AuthSession,
   OfflineAuth,
@@ -15,6 +20,7 @@ export type LaunchRequestOptions = {
   modLoader?: string;
   loaderType?: LoaderType;
   loaderVersion?: string;
+  customVersionPath?: string;
   memoryMin?: string;
   memoryMax?: string;
   javaPath?: string;
@@ -26,6 +32,7 @@ export type ResolvedLaunchRequest = {
   mcVersion: string;
   loaderType: LoaderType;
   loaderVersion?: string;
+  customVersionPath?: string;
   memoryMin: string;
   memoryMax: string;
   javaPath?: string;
@@ -64,19 +71,134 @@ function ensureParentDir(filePath: string): void {
   }
 }
 
-async function ensureDownloadedFile(filePath: string, url: string, label: string): Promise<string> {
-  if (existsSync(filePath) && statSync(filePath).size > 0) {
-    return filePath;
+/** Минимальный размер валидного JAR — отсекает пустые и оборванные файлы. */
+const MIN_JAR_BYTES = 1024;
+
+/** Таймаут загрузки JAR, мс: без него fetch мог висеть бесконечно. */
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+
+/** Таймаут запроса «последней версии» (latest.json / GitHub API), мс. */
+const VERSION_LOOKUP_TIMEOUT_MS = 10_000;
+
+const RETROAUTH_INJECTOR_VERSION = "1.0.4";
+const RETROAUTH_INJECTOR_SHA256 = "8653b24cf088b11630184e574d2258b6ca1d7c4ab89914a636d6785403fad4b0";
+
+/** Файл похож на ZIP/JAR: сигнатура "PK" и минимальный размер. */
+function looksLikeJar(filePath: string, size: number): boolean {
+  if (size < MIN_JAR_BYTES) return false;
+  let fd: number | null = null;
+  try {
+    fd = openSync(filePath, "r");
+    const header = Buffer.alloc(4);
+    const read = readSync(fd, header, 0, header.length, 0);
+    return read >= 2 && header[0] === 0x50 && header[1] === 0x4b;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+/**
+ * fetch с таймаутом и, если передан, внешней отменой (например «Стоп»
+ * во время подготовки запуска).
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromCaller = () => controller.abort();
+
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener("abort", abortFromCaller, { once: true });
+    }
+  }
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+/**
+ * Скачивает файл, если его нет или он битый.
+ *
+ * Загрузка идёт во временный файл рядом и подменяет цель через rename:
+ * оборванная загрузка больше не оставляет «половину» JAR на месте рабочего
+ * файла. Сигнатуру ("PK") проверяем и у скачанного, и у уже лежащего файла —
+ * раньше хватало size > 0, поэтому обрезанный JAR считался валидным навсегда.
+ * Для закреплённого релиза проверяем также SHA-256 кэша и загрузки. Прежний
+ * файл сохраняем до успешной проверки нового, но не возвращаем как актуальный.
+ */
+async function ensureDownloadedFile(
+  filePath: string,
+  url: string,
+  label: string,
+  signal?: AbortSignal,
+  expectedSha256?: string,
+): Promise<string> {
+  if (existsSync(filePath)) {
+    if (looksLikeJar(filePath, statSync(filePath).size)
+      && (!expectedSha256 || createHash("sha256").update(readFileSync(filePath)).digest("hex") === expectedSha256)) {
+      return filePath;
+    }
   }
 
   ensureParentDir(filePath);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`${label}fetch failed${response.status} ${response.statusText}`);
-  }
+  const tempPath = `${filePath}.part`;
 
-  writeFileSync(filePath, Buffer.from(await response.arrayBuffer()));
-  return filePath;
+  try {
+    const response = await fetchWithTimeout(url, { redirect: "follow" }, DOWNLOAD_TIMEOUT_MS, signal);
+    if (!response.ok) {
+      throw new Error(`${label} download failed: ${response.status} ${response.statusText}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length < MIN_JAR_BYTES || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
+      throw new Error(`${label} download returned an invalid archive (${buffer.length} bytes)`);
+    }
+    if (expectedSha256 && createHash("sha256").update(buffer).digest("hex") !== expectedSha256) {
+      throw new Error(`${label} download failed: SHA-256 mismatch`);
+    }
+
+    writeFileSync(tempPath, buffer);
+    renameSync(tempPath, filePath);
+    return filePath;
+  } catch (error) {
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // ignore
+    }
+    throw error;
+  }
+}
+
+/** URL загрузки JAR доверенный: только https и только известный хост (см. config.ts). */
+function isTrustedAuthlibInjectorDownloadUrl(raw: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  return getAuthlibInjectorAllowedHosts().includes(parsed.hostname.toLowerCase());
 }
 
 export function getDefaultMinecraftRoot(options: MinecraftRootOptions): string {
@@ -105,19 +227,67 @@ export function getDefaultMinecraftRootFromEnv(options: MinecraftRootEnvOptions 
   });
 }
 
-export async function ensureAuthlibInjector(rootPath: string): Promise<string> {
+export async function resolveLatestAuthlibInjectorUrl(): Promise<string> {
+  const root = URLS.official.authlibInjector.root;
+  try {
+    const res = await fetchWithTimeout(
+      `${root.replace(/\/$/, "")}/artifact/latest.json`,
+      {},
+      VERSION_LOOKUP_TIMEOUT_MS,
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { download_url?: string };
+      // download_url приходит от удалённого хоста — принимаем только https
+      // и только известные хосты, иначе падаем на пиннутый URL ниже.
+      if (data?.download_url && isTrustedAuthlibInjectorDownloadUrl(data.download_url)) {
+        return data.download_url;
+      }
+    }
+  } catch {
+    // fallback
+  }
+
+  try {
+    const res = await fetchWithTimeout(
+      "https://api.github.com/repos/yushijinhun/authlib-injector/releases/latest",
+      { headers: { "User-Agent": XNLC_USER_AGENT } },
+      VERSION_LOOKUP_TIMEOUT_MS,
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { assets?: Array<{ browser_download_url?: string; name?: string }> };
+      const jarAsset = data.assets?.find((a) => a.name?.endsWith(".jar"));
+      if (jarAsset?.browser_download_url && isTrustedAuthlibInjectorDownloadUrl(jarAsset.browser_download_url)) {
+        return jarAsset.browser_download_url;
+      }
+    }
+  } catch {
+    // fallback
+  }
+
+  return "https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.8/authlib-injector-1.2.8.jar";
+}
+
+export async function ensureAuthlibInjector(rootPath: string, signal?: AbortSignal): Promise<string> {
+  const filePath = path.join(rootPath, "authlib-injector.jar");
+  if (existsSync(filePath) && looksLikeJar(filePath, statSync(filePath).size)) {
+    return filePath;
+  }
+  const downloadUrl = await resolveLatestAuthlibInjectorUrl();
   return ensureDownloadedFile(
-    path.join(rootPath, "authlib-injector.jar"),
-    "https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.7/authlib-injector-1.2.7.jar",
+    filePath,
+    downloadUrl,
     "authlib-injector",
+    signal,
   );
 }
 
-export async function ensureRetroAuthInjector(rootPath: string): Promise<string> {
+export async function ensureRetroAuthInjector(rootPath: string, signal?: AbortSignal): Promise<string> {
   return ensureDownloadedFile(
     path.join(rootPath, "retroauth-injector.jar"),
-    "https://github.com/MAINER4IK/RetroAuth-injector/releases/download/1.0.2/retroauth-injector-1.0.2.jar",
+    `https://github.com/MAINER4IK/RetroAuth-injector/releases/download/${RETROAUTH_INJECTOR_VERSION}/retroauth-injector-${RETROAUTH_INJECTOR_VERSION}.jar`,
     "retroauth-injector",
+    signal,
+    RETROAUTH_INJECTOR_SHA256,
   );
 }
 
@@ -137,7 +307,7 @@ export function createLaunchAuth(account: AuthorizationAccount): LaunchAuth {
 export function resolveLaunchRequest(options: LaunchRequestOptions): ResolvedLaunchRequest | { error: string } {
   const mcVersion = options.mcVersion ?? options.version;
   if (!mcVersion) {
-    return { error: "fetch failed" };
+    return { error: "No Minecraft version specified" };
   }
 
   const modLoaderToLoaderType: Record<string, LoaderType> = {
@@ -148,12 +318,17 @@ export function resolveLaunchRequest(options: LaunchRequestOptions): ResolvedLau
     liteloader: "liteloader",
     quilt: "quilt",
     optifine: "optifine",
+    custom: "custom",
   };
 
+  if (options.modLoader && !modLoaderToLoaderType[options.modLoader] && !options.loaderType) {
+    return { error: `Unknown mod loader: ${options.modLoader}` };
+  }
   return {
     mcVersion,
     loaderType: options.loaderType ?? (options.modLoader ? modLoaderToLoaderType[options.modLoader] : "vanilla"),
     loaderVersion: options.loaderVersion,
+    customVersionPath: options.customVersionPath,
     memoryMin: options.memoryMin ?? "512M",
     memoryMax: options.memoryMax ?? "4G",
     javaPath: options.javaPath,

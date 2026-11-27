@@ -1,0 +1,52 @@
+import { launcherAssetUrl } from "@/lib/launcher-assets"
+import { useEffect, useState } from "react"
+import type { Theme } from "./types"
+import { applyTheme } from "./theme-model"
+
+export function useAppliedTheme(initial: Theme): Theme {
+  const [theme, setTheme] = useState(initial)
+  useEffect(() => setTheme(initial), [initial])
+  useEffect(() => {
+    const listener = (event: Event) => setTheme((event as CustomEvent<Theme>).detail)
+    window.addEventListener("theme:applied", listener)
+    return () => window.removeEventListener("theme:applied", listener)
+  }, [])
+  return theme
+}
+
+export function cssBackgroundVideo(theme: Theme): string {
+  if (theme.cssEnabled === false) return ""
+  const source = theme.css?.match(/--custom-background-video\s*:\s*url\(\s*['"]?([^'"\)]+)['"]?\s*\)/i)?.[1]?.trim() ?? ""
+  return /^(https?:|xnl-theme:|data:video\/)/i.test(source) ? launcherAssetUrl(source) : ""
+}
+
+/** Экономит ресурсы только в скрытом окне, независимо от состояния игры. */
+export function useMediaPaused(enabled = true) {
+  const [paused, setPaused] = useState(document.hidden)
+  useEffect(() => {
+    if (!enabled) return
+    const refresh = () => setPaused(document.hidden)
+    refresh()
+    document.addEventListener("visibilitychange", refresh)
+    return () => document.removeEventListener("visibilitychange", refresh)
+  }, [enabled])
+  return paused
+}
+
+export function ThemeRuntime({ theme: initial }: { theme: Theme }) {
+  const theme = useAppliedTheme(initial)
+  useEffect(() => {
+    const query = matchMedia("(prefers-color-scheme: dark)")
+    const update = () => { if (theme.appearance?.colorMode === "system") applyTheme(theme) }
+    query.addEventListener("change", update)
+    return () => query.removeEventListener("change", update)
+  }, [theme])
+  useEffect(() => {
+    if (!theme.font?.source) return
+    let alive = true
+    const font = new FontFace("XneonThemeFont", `url(${JSON.stringify(launcherAssetUrl(theme.font.source))})`)
+    void font.load().then((loaded) => { if (alive) document.fonts.add(loaded) }).catch(() => {})
+    return () => { alive = false; document.fonts.delete(font) }
+  }, [theme.font?.source])
+  return null
+}

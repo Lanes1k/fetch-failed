@@ -92,7 +92,7 @@ function renderExtraEntry(
           ]
             .filter(Boolean)
             .join(" ") || "none",
-          textShadow: inheritedBold ? `fetch failed${inheritedColor}fetch failed${inheritedColor}20` : "none",
+          textShadow: inheritedBold ? `0 0 2px ${inheritedColor}40, 0 0 6px ${inheritedColor}20` : "none",
         }}
       >
         {entry}
@@ -123,7 +123,7 @@ function renderExtraEntry(
           textDecoration: [underline ? "underline" : "", strikethrough ? "line-through" : ""]
             .filter(Boolean)
             .join(" ") || "none",
-          textShadow: bold ? `fetch failed${color}fetch failed${color}20` : "none",
+          textShadow: bold ? `0 0 2px ${color}40, 0 0 6px ${color}20` : "none",
         }}
       >
         {entry.text}
@@ -227,7 +227,7 @@ export function parseMotd(raw: string): ReactNode[] {
           color,
           fontWeight: bold ? "bold" : "normal",
           fontStyle: italic ? "italic" : "normal",
-          textShadow: bold ? `fetch failed${color}fetch failed${color}20` : "none",
+          textShadow: bold ? `0 0 2px ${color}40, 0 0 6px ${color}20` : "none",
         }
         const decoration = [
           underline ? "underline" : "",

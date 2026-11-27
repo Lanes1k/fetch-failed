@@ -47,7 +47,7 @@ import {
 } from "./urls.js"
 
 /** Размер страницы каталога: пять полных рядов по пять карточек. */
-const CATALOG_PAGE_SIZE = 25
+const CATALOG_PAGE_SIZE = 24
 /**
  * Сколько страниц максимум подгружаем в пул для локальных фильтров.
  * Каталог у Laby огромный, тянуть его целиком нельзя — пять страниц по 100
@@ -215,7 +215,7 @@ export class LabyCatalog {
    */
   async texture(hash: string): Promise<Uint8Array | null> {
     if (!isLabyHash(hash)) return null
-    const data = await this.cache.binary(`laby-texture-${hash}.png`, () => this.client.texture(labyTextureUrl(hash)))
+    const data = await this.cache.binary(`laby-texture-${hash}.png`, () => this.client.texture(labyTextureUrl(hash)), { validate: isValidTexture })
     return isValidTexture(data) ? data : null
   }
 

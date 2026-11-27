@@ -16,6 +16,8 @@ import type { LoaderMetaClient } from "../core/loader-meta-client.js";
 import { getLoaderMetaClient } from "../core/loader-meta-client-singleton.js";
 import { MetaClient } from "../core/meta-client.js";
 import type { ILoaderHandler } from "./types.js";
+import { PROFILE_REVISION } from "../core/profile-builder.js";
+import { ensureDirSync } from "../utils/sync.js";
 
 export class FabricHandler implements ILoaderHandler {
   private loaderMetaClient: LoaderMetaClient;
@@ -50,7 +52,7 @@ export class FabricHandler implements ILoaderHandler {
     const metaIntermediary = await this.loaderMetaClient.getVersion("net.fabricmc.intermediary", mcVersion);
 
     if (!metaFabric || !metaIntermediary) {
-      throw new Error(`fetch failed${mcVersion}`);
+      throw new Error(`Fabric components not found in loader meta for MC ${mcVersion}`);
     }
 
     // 2. Fetch Base Minecraft JSON
@@ -59,7 +61,7 @@ export class FabricHandler implements ILoaderHandler {
     // 3. Prepare profile
     const profileName = `fabric-loader-${fabricVersion}-${mcVersion}`;
     const versionDir = path.join(this.gameDir, "versions", profileName);
-    if (!fs.existsSync(versionDir)) fs.mkdirSync(versionDir, { recursive: true });
+    ensureDirSync(versionDir);
 
     // 4. Build VersionJson (loader-style merging)
     const versionJson: VersionJson = {
@@ -71,19 +73,21 @@ export class FabricHandler implements ILoaderHandler {
       mainClass: metaFabric.mainClass || "net.fabricmc.loader.impl.launch.knot.KnotClient",
       inheritsFrom: mcVersion,
       jar: mcVersion,
+      xnlcProfileRevision: PROFILE_REVISION,
+      arguments: metaFabric.arguments,
       libraries: [
         ...(metaFabric.libraries || []),
         ...(metaIntermediary.libraries || []),
         ...((metaFabric as any)["+libraries"] || []),
       ],
-      traits: [...(metaFabric["+traits"] || []), "fabric-loader"]
+      traits: [...(baseMcJson.traits || []), ...(metaFabric["+traits"] || []), "fabric-loader"]
     };
 
     // Handle loader-style arguments (base first, then patch)
     if (metaFabric.arguments) {
       versionJson.arguments = {
-        game: [...(baseMcJson.arguments?.game || []), ...(metaFabric.arguments.game || [])],
-        jvm: [...(baseMcJson.arguments?.jvm || []), ...(metaFabric.arguments.jvm || [])],
+        game: metaFabric.arguments.game,
+        jvm: metaFabric.arguments.jvm,
       };
     }
 
