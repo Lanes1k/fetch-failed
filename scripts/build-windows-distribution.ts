@@ -30,7 +30,7 @@ assert.equal(Bun.version, "1.4.4", "Windows packaging requires Bun 1.4.4")
 const root = path.resolve(import.meta.dir, "..")
 const version = packageJson.version
 const channelBuild = path.join(root, "build-electrobun", `${channel}-win-x64`)
-const bundleName = "FetchFailed" + (channel === "stable" ? "" : "-" + channel)
+const bundleName = "Fetchfailed" + (channel === "stable" ? "" : "-" + channel)
 const metadataPath = path.join(channelBuild, bundleName, "Resources", "metadata.json")
 assert.ok(existsSync(metadataPath), "Сначала соберите канал: bun run build (" + metadataPath + ")")
 const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as { identifier?: string; channel?: string; hash?: string; name?: string }

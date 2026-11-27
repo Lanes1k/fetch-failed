@@ -70,13 +70,13 @@ export function compatibilityManifestFileName(target: UpdateTarget) {
 /** Имя native tar-архива, которое публикует Electrobun/Hutch. */
 export function nativeArchiveName(target: UpdateTarget) {
   const suffix = target.channel === "stable" ? "" : "-canary"
-  return `${target.channel}-${target.platform}-${target.arch}-FetchFailed${suffix}${target.platform === "macos" ? ".app" : ""}.tar.zst`
+  return `${target.channel}-${target.platform}-${target.arch}-Fetchfailed${suffix}${target.platform === "macos" ? ".app" : ""}.tar.zst`
 }
 
 /** Корень bundle внутри tar: у macOS display name с пробелом и .app. */
 export function nativeBundleRoot(target: UpdateTarget) {
   const suffix = target.channel === "stable" ? "" : "-canary"
-  return target.platform === "macos" ? `Fetch failed${suffix}.app` : `FetchFailed${suffix}`
+  return target.platform === "macos" ? `Fetch failed${suffix}.app` : `Fetchfailed${suffix}`
 }
 
 export function updateInstallerName(version: string) {

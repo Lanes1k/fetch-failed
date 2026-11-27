@@ -1,6 +1,6 @@
 // Linux-пакеты (deb/rpm/pacman/AppImage/tar.xz) из штатного Linux update archive.
 //
-// Источник — `stable-linux-x64-FetchFailed.tar.zst`, который уже проверен
+// Источник — `stable-linux-x64-Fetchfailed.tar.zst`, который уже проверен
 // `electrobun-artifacts.ts` (identity, ELF, payload). Здесь payload только
 // раскладывается по FHS и заворачивается в системные форматы: бинарники не
 // пересобираются и не меняются.
@@ -350,7 +350,7 @@ export async function packageLinux(input: string, output: string) {
   const version = packageJson.version
   assert.match(version, /^\d+\.\d+\.\d+(?:-(?:pre|beta)[1-9]\d*)?$/, "Use a stable version, <version>-preN or <version>-betaN")
   const channel = version.includes("-") ? "canary" : "stable"
-  const app = "FetchFailed" + (channel === "stable" ? "" : "-canary")
+  const app = "Fetchfailed" + (channel === "stable" ? "" : "-canary")
   const archive = `${channel}-linux-x64-${app}.tar.zst`
   assert.ok((await readdir(input)).includes(archive), "Missing native Linux update archive: " + archive)
   assert.ok(!(await readdir(output).catch(() => [] as string[])).length, "Output directory must be empty")

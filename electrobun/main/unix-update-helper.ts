@@ -154,7 +154,7 @@ async function runAuthenticatedUnixHelper(job: ReturnType<typeof authenticateUni
       try { await handle.sync() } finally { await handle.close() }
     } else {
       const bundle = job.old.platform === "macos" ? `Fetch failed${update.manifest.channel === "stable" ? "" : "-canary"}.app`
-        : `FetchFailed${update.manifest.channel === "stable" ? "" : "-canary"}`
+        : `Fetchfailed${update.manifest.channel === "stable" ? "" : "-canary"}`
       const extracted = await extractUnixUpdateArchive(job.source, path.join(files.work, "extracted"), bundle, update.manifest.artifact, cancel.signal)
       await verifyUnixUpdatePayload(extracted, update.manifest)
       // Переносим только известный локальный TAR-policy marker, а не произвольные файлы старого app.

@@ -42,7 +42,7 @@ live("внешний LiteLoader fixture: metadata и SHA-1", async () => {
 }, 30000)
 
 for (const item of cases) live(`реальный ${item.loader}: metadata и SHA-1`, async () => {
-  const response = await fetch(`https://api.modrinth.com/v2/version_file/${item.hash}`, { headers: { "User-Agent": "FetchFailed-parser-tests/0.1" } })
+  const response = await fetch(`https://api.modrinth.com/v2/version_file/${item.hash}`, { headers: { "User-Agent": "Fetchfailed-parser-tests/0.1" } })
   expect(response.ok).toBe(true)
   const version = await response.json() as { files: { url: string; hashes: { sha1: string } }[] }
   const file = version.files.find(f => f.hashes.sha1 === item.hash)
@@ -73,7 +73,7 @@ for (const item of cases) live(`реальный ${item.loader}: metadata и SHA
 
 live("реальный Paper-плагин: YAML metadata и SHA-1", async () => {
   const hash = "b9b1a547cade490d1f8ddd2246c7ec8f4204a3f6"
-  const response = await fetch(`https://api.modrinth.com/v2/version_file/${hash}`, { headers: { "User-Agent": "FetchFailed-parser-tests/0.1" } })
+  const response = await fetch(`https://api.modrinth.com/v2/version_file/${hash}`, { headers: { "User-Agent": "Fetchfailed-parser-tests/0.1" } })
   expect(response.ok).toBe(true)
   const version = await response.json() as { files: { url: string; hashes: { sha1: string } }[] }
   const file = version.files.find(f => f.hashes.sha1 === hash)
@@ -91,7 +91,7 @@ for (const item of [
   { hash: "96932a034fff4cd0cad08ba12db730450c4772da", format: "resourcepack" },
   { hash: "838139b54cddb56b2e83cd260d8efd960ac536d6", format: "shaderpack" },
 ] as const) live(`реальный ${item.format}: обнаружение и SHA-1`, async () => {
-  const response = await fetch(`https://api.modrinth.com/v2/version_file/${item.hash}`, { headers: { "User-Agent": "FetchFailed-parser-tests/0.1" } })
+  const response = await fetch(`https://api.modrinth.com/v2/version_file/${item.hash}`, { headers: { "User-Agent": "Fetchfailed-parser-tests/0.1" } })
   expect(response.ok).toBe(true)
   const version = await response.json() as { files: { url: string; hashes: { sha1: string } }[] }
   const file = version.files.find(f => f.hashes.sha1 === item.hash)

@@ -34,7 +34,7 @@ import { ShutdownCoordinator } from "../../electrobun/platform/shutdown.ts"
     const baseUrlOf = channel => channel === "canary" ? canaryBase : stableBase
     const channel = /-(?:pre|beta)\d+$/.test(installed) ? "canary" : "stable"
     const local = { channel, version: installed, hash: "old123", baseUrl: baseUrlOf(channel) }
-    const manifest = { version: "1.0.9", channel: local.channel, hash: "next123", artifact: { file: `${local.channel}-win-x64-FetchFailed.tar.zst` } }
+    const manifest = { version: "1.0.9", channel: local.channel, hash: "next123", artifact: { file: `${local.channel}-win-x64-Fetchfailed.tar.zst` } }
     let selected = local.channel
     let pending = null
     let beforeQuit
@@ -318,7 +318,7 @@ import { ShutdownCoordinator } from "../../electrobun/platform/shutdown.ts"
         sha256: installer.sha256 ?? sha256(installerBytes),
       },
       artifact: {
-        file: "canary-win-x64-FetchFailed-canary.tar.zst", tarSha256: "a".repeat(64),
+        file: "canary-win-x64-Fetchfailed-canary.tar.zst", tarSha256: "a".repeat(64),
         tarSize: 1000, downloadSize: 500, downloadSha256: "b".repeat(64),
       },
     }))

@@ -7,7 +7,7 @@ async function setWindowsExecutableIdentity() {
   const build = process.env.ELECTROBUN_BUILD_DIR
   const channel = process.env.ELECTROBUN_BUILD_ENV
   if (!build || (channel !== "stable" && channel !== "canary" && channel !== "dev")) throw new Error("Electrobun build identity is missing")
-  const wrapper = path.join(build, channel === "stable" ? "FetchFailed" : "FetchFailed-" + channel)
+  const wrapper = path.join(build, channel === "stable" ? "Fetchfailed" : "Fetchfailed-" + channel)
   const relative = path.relative(path.resolve(import.meta.dir, ".."), path.resolve(wrapper))
   if (!relative || relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
     throw new Error("Electrobun wrapper is outside the project")

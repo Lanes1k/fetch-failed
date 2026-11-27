@@ -15,7 +15,7 @@ function unixDocument(platform: "linux" | "macos" = "linux", arch: "x64" | "arm6
   const version = channel === "stable" ? "1.0.9" : "1.0.9-pre1"
   const suffix = channel === "stable" ? "" : "-canary"
   return { schemaVersion: 1, identifier: appIdentifier, version, hash: "new123", channel, platform, arch,
-    artifact: { file: `${channel}-${platform}-${arch}-FetchFailed${suffix}${platform === "macos" ? ".app" : ""}.tar.zst`,
+    artifact: { file: `${channel}-${platform}-${arch}-Fetchfailed${suffix}${platform === "macos" ? ".app" : ""}.tar.zst`,
       downloadSize: 100, downloadSha256: "a".repeat(64), tarSize: 200, tarSha256: "b".repeat(64) },
     distributions: platform === "linux" ? { appimage: { file: `fetch-failed-${version}-x86_64.AppImage`, downloadSize: 100, downloadSha256: "c".repeat(64) } } : {},
   }
@@ -23,7 +23,7 @@ function unixDocument(platform: "linux" | "macos" = "linux", arch: "x64" | "arm6
 
 function windowsDocument() {
   return { schemaVersion: 1, identifier: appIdentifier, channel: "stable", version: "1.0.9", hash: "new123", platform: "win", arch: "x64",
-    artifact: { file: "stable-win-x64-FetchFailed.tar.zst", tarSha256: "a".repeat(64), tarSize: 1000, downloadSha256: "b".repeat(64), downloadSize: 500 } }
+    artifact: { file: "stable-win-x64-Fetchfailed.tar.zst", tarSha256: "a".repeat(64), tarSize: 1000, downloadSha256: "b".repeat(64), downloadSize: 500 } }
 }
 
 function signed(value: unknown, key = privateKey) {

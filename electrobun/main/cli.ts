@@ -109,7 +109,7 @@ export function launcherCliEndpoint(profile: string) {
   const windows = process.platform === "win32"
   const absolute = path.resolve(profile)
   const hash = createHash("sha256").update(windows ? absolute.toLowerCase() : absolute).digest("hex").slice(0, 32)
-  const pipe = windows ? "\\\\.\\pipe\\FetchFailed-" + hash : path.join(unixPrivateDirectory(), hash + ".sock")
+  const pipe = windows ? "\\\\.\\pipe\\Fetchfailed-" + hash : path.join(unixPrivateDirectory(), hash + ".sock")
   return { pipe, tokenPath: profile + ".cli" }
 }
 

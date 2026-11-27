@@ -12,7 +12,7 @@ test("Hutch checksum metadata restores the signed v2 contract without changing a
     const tar = Buffer.from("archive fixture")
     const archive = Bun.zstdCompressSync(tar)
     const prefix = "stable-win-x64"
-    const file = prefix + "-FetchFailed.tar.zst"
+    const file = prefix + "-Fetchfailed.tar.zst"
     const manifest = { schemaVersion: 1, identifier: appIdentifier, version: "1.0.8", channel: "stable", platform: "win", arch: "x64", hash: "abc123", artifact: { file } }
     await writeFile(path.join(root, file), archive)
     await writeFile(path.join(root, prefix + "-update.json"), JSON.stringify(manifest))
@@ -33,7 +33,7 @@ for (const channel of ["stable", "canary"]) {
       try {
         const prefix = `${channel}-${platform}-${arch}`
         const version = channel === "stable" ? "1.0.8" : "1.0.8-beta1"
-        const file = prefix + "-FetchFailed.tar.zst"
+        const file = prefix + "-Fetchfailed.tar.zst"
         const tar = Buffer.from("archive fixture")
         const archive = Buffer.from(Bun.zstdCompressSync(tar))
         const manifest = JSON.stringify({ schemaVersion: 1, identifier: appIdentifier, version, channel, platform, arch, hash: "abc123", artifact: { file } }, null, 2)

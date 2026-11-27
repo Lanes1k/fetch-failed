@@ -19,7 +19,7 @@ const installation = { platform: "linux" as const, kind: "appimage" as const, ta
 const local = { channel: "stable" as const, version: "1.0.8", hash: "old123" }
 const unixPayload = Buffer.from("AppImage fixture")
 const unixManifest = { schemaVersion: 1, identifier: appIdentifier, platform: "linux", arch: "x64", channel: "canary", version: "1.0.9-pre1", hash: "new123",
-  artifact: { file: "canary-linux-x64-FetchFailed-canary.tar.zst", downloadSize: 100, downloadSha256: "a".repeat(64), tarSize: 200, tarSha256: "b".repeat(64) },
+  artifact: { file: "canary-linux-x64-Fetchfailed-canary.tar.zst", downloadSize: 100, downloadSha256: "a".repeat(64), tarSize: 200, tarSha256: "b".repeat(64) },
   distributions: { appimage: { file: "fetch-failed-1.0.9-pre1-x86_64.AppImage", downloadSize: unixPayload.length, downloadSha256: createHash("sha256").update(unixPayload).digest("hex") } } }
 const unixManifestBytes = Buffer.from(JSON.stringify(unixManifest))
 const unixSignature = Buffer.from(JSON.stringify({ keyId: "fixture", signature: sign(null, unixManifestBytes, privateKey).toString("base64") }))
@@ -28,7 +28,7 @@ const unixUpdate: any = { manifest: unixManifest, manifestBytes: unixManifestByt
 
 const windowsPayload = Buffer.from("installer fixture")
 const windowsManifest = { schemaVersion: 1, identifier: appIdentifier, channel: "canary", version: "1.0.9-pre1", hash: "new123", platform: "win", arch: "x64",
-  artifact: { file: "canary-win-x64-FetchFailed-canary.tar.zst", tarSha256: "a".repeat(64), tarSize: 1000, downloadSha256: "b".repeat(64), downloadSize: 500 },
+  artifact: { file: "canary-win-x64-Fetchfailed-canary.tar.zst", tarSha256: "a".repeat(64), tarSize: 1000, downloadSha256: "b".repeat(64), downloadSize: 500 },
   installer: { file: "fetch-failed-1.0.9-pre1-win-x64.exe", size: windowsPayload.length, sha256: createHash("sha256").update(windowsPayload).digest("hex") } }
 const windowsManifestBytes = Buffer.from(JSON.stringify(windowsManifest))
 const windowsSignature = Buffer.from(JSON.stringify({ keyId: "fixture", signature: sign(null, windowsManifestBytes, privateKey).toString("base64") }))
@@ -136,7 +136,7 @@ test("Windows: отложенный установщик заново прове
 test("Windows: запись прежней SDK-схемы снимается и не применяется", () => windowsFixture(async root => {
   const store = new UpdateStateStore(root, keys)
   const manifest = { ...windowsManifest, channel: "stable", version: "1.0.9",
-    artifact: { ...windowsManifest.artifact, file: "stable-win-x64-FetchFailed.tar.zst" },
+    artifact: { ...windowsManifest.artifact, file: "stable-win-x64-Fetchfailed.tar.zst" },
     installer: { ...windowsManifest.installer, file: "fetch-failed-1.0.9-win-x64.exe" } }
   const bytes = Buffer.from(JSON.stringify(manifest))
   const signature = Buffer.from(JSON.stringify({ keyId: "fixture", signature: sign(null, bytes, privateKey).toString("base64") }))

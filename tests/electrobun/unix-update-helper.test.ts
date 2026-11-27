@@ -17,7 +17,7 @@ const keys = { fixture: publicKey.export({ type: "spki", format: "pem" }).toStri
 const nonce = "a".repeat(32), profile = "/Users/test/Library/Application Support/xneonlauncher"
 const context = { profile, parentPid: 42, platform: "macos" as const, arch: "arm64" as const }
 const manifest = { schemaVersion: 1, identifier: appIdentifier, platform: "macos", arch: "arm64", channel: "stable", version: "1.0.9", hash: "new123",
-  artifact: { file: "stable-macos-arm64-FetchFailed.app.tar.zst", downloadSize: 100, downloadSha256: "a".repeat(64), tarSize: 200, tarSha256: "b".repeat(64) }, distributions: {} }
+  artifact: { file: "stable-macos-arm64-Fetchfailed.app.tar.zst", downloadSize: 100, downloadSha256: "a".repeat(64), tarSize: 200, tarSha256: "b".repeat(64) }, distributions: {} }
 const manifestBytes = Buffer.from(JSON.stringify(manifest)), signature = Buffer.from(JSON.stringify({ keyId: "fixture", signature: sign(null, manifestBytes, privateKey).toString("base64") }))
 function job() { return { schemaVersion: 1, nonce, parentPid: 42, profile, selectedChannel: "stable",
   old: { identifier: appIdentifier, platform: "macos", arch: "arm64", version: "1.0.8", hash: "old123", channel: "stable" },

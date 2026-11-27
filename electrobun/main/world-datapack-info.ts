@@ -82,7 +82,7 @@ export async function enrichDatapacks(items: DatapackInfo[], fetcher: typeof fet
     const response = await fetcher(`${API}${route}`, {
       signal,
       method: body ? "POST" : "GET",
-      headers: { "User-Agent": "FetchFailed/1.0 (https://launcher.xneon.org)", ...(body ? { "Content-Type": "application/json" } : {}) },
+      headers: { "User-Agent": "Fetchfailed/1.0 (https://launcher.xneon.org)", ...(body ? { "Content-Type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     })
     if (!response.ok) throw new Error(`Modrinth API ${response.status}`)

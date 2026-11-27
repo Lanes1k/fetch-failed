@@ -41,7 +41,7 @@ const manifest = {
   schemaVersion: 1, identifier: appIdentifier, channel, platform: "win", arch: "x64",
   version, hash: "next123",
   artifact: {
-    file: "stable-win-x64-FetchFailed.tar.zst", downloadSize: archive.length, downloadSha256: sha256(archive),
+    file: "stable-win-x64-Fetchfailed.tar.zst", downloadSize: archive.length, downloadSha256: sha256(archive),
     tarSize: archive.length, tarSha256: sha256(archive),
   },
   installer: { file: installerFile, size: installer.length, sha256: sha256(installer) },

@@ -15,7 +15,7 @@ export async function extractNativePayload(input: string, output: string, channe
     const result = spawnSync(nativeTarExecutable(), ["-xf", tar, "-C", path.resolve(output)], { encoding: "utf8" })
     assert.equal(result.status, 0, result.stderr)
   } finally { await rm(tar, { force: true }) }
-  return path.join(output, platform === "macos" ? `Fetch failed${channel === "stable" ? "" : "-canary"}.app` : `FetchFailed${channel === "stable" ? "" : "-canary"}`)
+  return path.join(output, platform === "macos" ? `Fetch failed${channel === "stable" ? "" : "-canary"}.app` : `Fetchfailed${channel === "stable" ? "" : "-canary"}`)
 }
 
 if (import.meta.main) {

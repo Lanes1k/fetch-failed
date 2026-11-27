@@ -57,15 +57,15 @@ test('identity, каналы и имена публикаций согласов
       `fetch-failed-${version}-mac-arm64.dmg`, `fetch-failed-${version}-amd64.deb`,
       `fetch-failed-${version}-x86_64.AppImage`, `fetch-failed-${version}-x86_64.pacman`,
       `fetch-failed-${version}-x86_64.rpm`, `fetch-failed-${version}-x64.tar.xz`,
-      `${channel}-win-x64-FetchFailed${suffix}.tar.zst`, `${channel}-linux-x64-FetchFailed${suffix}.tar.zst`,
-      `${channel}-macos-arm64-FetchFailed${suffix}.app.tar.zst`,
+      `${channel}-win-x64-Fetchfailed${suffix}.tar.zst`, `${channel}-linux-x64-Fetchfailed${suffix}.tar.zst`,
+      `${channel}-macos-arm64-Fetchfailed${suffix}.app.tar.zst`,
       `${channel}-win-x64-update.json`, `${channel}-win-x64-update.json.sig`,
       `${channel}-win-x64-update-v2.json`, `${channel}-win-x64-update-v2.json.sig`,
       `${channel}-linux-x64-update.json.sig`, `${channel}-macos-arm64-update-v2.json.sig`,
     ]) assert.ok(names.includes(name), name)
     assert.ok(!names.some(name => /latest|blockmap|release-metadata/.test(name)))
     assert.ok(!names.some(name => name.startsWith(channel === 'stable' ? 'canary-' : 'stable-')), 'каналы не смешиваются')
-    assert.ok(!names.some(name => /FetchFailed.*(?:\.dmg|Setup.*\.zip|Setup\.tar\.gz)$/.test(name)), 'технические имена SDK не публикуются')
+    assert.ok(!names.some(name => /Fetchfailed.*(?:\.dmg|Setup.*\.zip|Setup\.tar\.gz)$/.test(name)), 'технические имена SDK не публикуются')
     assert.deepEqual(releaseChannelTargets(channel), releaseTargets.map(({ platform, arch }) => ({ channel, platform, arch })))
   }
   assert.ok(publicationNames('1.0.8-beta1').includes('fetch-failed-1.0.8-beta1-win-x64-portable.zip'))

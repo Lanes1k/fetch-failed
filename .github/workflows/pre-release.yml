@@ -206,8 +206,8 @@ jobs:
         run: |
           set -euo pipefail
           bun scripts/extract-native-payload.ts checked-unix native-payload "$CHANNEL" "$TARGET_PLATFORM" "$TARGET_ARCH"
-          payload="native-payload/FetchFailed"
-          if [ "$CHANNEL" = canary ]; then payload="native-payload/FetchFailed-canary"; fi
+          payload="native-payload/Fetchfailed"
+          if [ "$CHANNEL" = canary ]; then payload="native-payload/Fetchfailed-canary"; fi
           bun scripts/unix-native-preflight.ts "$payload" checked-unix-extra "$CHANNEL"
       - name: Build Linux distribution packages
         run: |

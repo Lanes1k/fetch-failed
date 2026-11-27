@@ -31,10 +31,10 @@ function identity(options: Options) {
   const version = options.version ?? packageJson.version
   assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/, "Invalid artifact version")
   const suffix = options.channel === "stable" ? "" : "-" + options.channel
-  const app = "FetchFailed" + suffix
+  const app = "Fetchfailed" + suffix
   const prefix = `${options.channel}-${options.platform}-${options.arch}`
   const installerPrefix = options.channel === "stable" ? `${options.platform}-${options.arch}` : prefix
-  const installer = options.platform === "win" ? `${installerPrefix}-FetchFailed-Setup${suffix}.zip`
+  const installer = options.platform === "win" ? `${installerPrefix}-Fetchfailed-Setup${suffix}.zip`
     : options.platform === "macos" ? `${installerPrefix}-${app}.dmg` : `${installerPrefix}-${app}-Setup.tar.gz`
   return { version, app, prefix, installer, archive: `${prefix}-${app}${options.platform === "macos" ? ".app" : ""}.tar.zst`, nsis: `fetch-failed-${version}-win-x64.exe` }
 }

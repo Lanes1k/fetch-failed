@@ -11,7 +11,7 @@ const [destination] = Bun.argv.slice(2)
 assert.ok(destination && Bun.argv.length === 3 && process.platform === "win32" && process.arch === "x64", "Usage: package-windows-portable <new-output>")
 assert.equal(Bun.version, "1.4.4")
 const output = path.resolve(destination)
-const root = path.resolve("build-electrobun/portable/dev-win-x64/FetchFailed-dev")
+const root = path.resolve("build-electrobun/portable/dev-win-x64/Fetchfailed-dev")
 const staging = path.join(output, "portable-stage")
 const version = packageJson.version
 const name = `fetch-failed-${version}-win-x64`

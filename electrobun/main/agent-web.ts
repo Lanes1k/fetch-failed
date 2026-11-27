@@ -234,7 +234,7 @@ function connectPage(url: URL, address: string, signal: AbortSignal): Promise<We
         Host: url.host,
         Accept: "text/html, application/xhtml+xml, text/plain, application/json;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
-        "User-Agent": "FetchFailed-Agent/1.0 (+https://xneon.org)",
+        "User-Agent": "Fetchfailed-Agent/1.0 (+https://xneon.org)",
       },
       ...(secure ? { servername: dnsHostname(url) } : {}),
     }, response => {
@@ -636,7 +636,7 @@ export async function searchAgentWeb(query: string, limit?: number, deps: WebSea
   const headers: Record<string, string> = {
     Accept: "application/json",
     "Content-Type": "application/json",
-    "User-Agent": "FetchFailed-Agent/1.0 (+https://xneon.org)",
+    "User-Agent": "Fetchfailed-Agent/1.0 (+https://xneon.org)",
   }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
   const fetchImpl = deps.fetch ?? fetch

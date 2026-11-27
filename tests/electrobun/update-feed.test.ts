@@ -14,7 +14,7 @@ const local = { channel: "stable" as const, version: "1.0.8", hash: "old123" }
 const target = { platform: "linux" as const, arch: "x64" as const, channel: "stable" as const }
 
 function responses(version = "1.0.9", channel = "stable") {
-  const artifact = { file: `${channel}-linux-x64-FetchFailed${channel === "canary" ? "-canary" : ""}.tar.zst`,
+  const artifact = { file: `${channel}-linux-x64-Fetchfailed${channel === "canary" ? "-canary" : ""}.tar.zst`,
     tarSize: 200, tarSha256: "a".repeat(64), downloadSize: 100, downloadSha256: "b".repeat(64) }
   const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, identifier: appIdentifier, platform: "linux", arch: "x64", channel, version, hash: "new123", artifact, distributions: {} }))
   const envelope = Buffer.from(JSON.stringify({ keyId: "fixture", signature: sign(null, bytes, privateKey).toString("base64") }))

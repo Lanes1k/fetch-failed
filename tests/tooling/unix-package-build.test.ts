@@ -67,7 +67,7 @@ test("updater helper собирается отдельным executable без �
 test("package-linux сохраняет относительный CEF symlink и маркер только в TAR staging", async () => {
   const work = await mkdtemp(path.join(tmpdir(), "xneon-package-layout-"))
   try {
-    const source = path.join(work, "extracted"), app = "FetchFailed", payload = path.join(source, app)
+    const source = path.join(work, "extracted"), app = "Fetchfailed", payload = path.join(source, app)
     await mkdir(path.join(payload, "bin/cef"), { recursive: true })
     await mkdir(path.join(payload, "Resources"))
     for (const file of ["bin/launcher", "bin/bun", "bin/cef/libcef.so", "Resources/version.json"]) await writeFile(path.join(payload, file), "fixture")
@@ -98,7 +98,7 @@ test("ldd использует абсолютный ELF path и search path по
     "node:child_process": { spawnSync(program: string, args: string[], options: any) {
       if (program === "ldd") {
         inspected = true
-        expect(args[0]).toBe(path.resolve("native-payload/FetchFailed/bin/bun"))
+        expect(args[0]).toBe(path.resolve("native-payload/Fetchfailed/bin/bun"))
         expect(path.isAbsolute(options.cwd)).toBe(true)
         expect(options.env.LD_LIBRARY_PATH).toBe([options.cwd, path.join(options.cwd, "cef")].join(":"))
         expect(options.env.LD_PRELOAD).toBeUndefined()
@@ -115,7 +115,7 @@ test("ldd использует абсолютный ELF path и search path по
     Bun: { file: () => ({ slice: () => ({ arrayBuffer: async () => Buffer.from("7f454c46", "hex") }) }) },
     require: (name: string) => { expect(Object.hasOwn(mocks, name)).toBe(true); return (mocks as any)[name] },
   })
-  await module.exports.inspectUnixBundle("native-payload/FetchFailed")
+  await module.exports.inspectUnixBundle("native-payload/Fetchfailed")
   expect(inspected).toBe(true)
 })
 

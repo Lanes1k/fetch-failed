@@ -2,7 +2,7 @@ import packageJson from "../package.json"
 
 /**
  * Отображаемое имя продукта — единственный источник для title окна, NSIS,
- * VERSIONINFO и Linux-пакетов. Технические имена (`FetchFailed`,
+ * VERSIONINFO и Linux-пакетов. Технические имена (`Fetchfailed`,
  * `fetch-failed`, `org.fetchfailed.launcher`) от него не зависят.
  */
 export const APP_NAME = "Fetch failed"

@@ -54,16 +54,16 @@ function nativeBinary(platform) {
 function windowsNativeArchive(version, value, channel = 'stable') {
   const pe = nativeBinary('win')
   const bytes = tarArchive([
-    ['FetchFailed/bin/bun.exe', pe],
-    ['FetchFailed/bin/launcher.exe', pe],
-    ['FetchFailed/bin/ElectrobunCore.dll', pe],
-    ['FetchFailed/Resources/version.json', Buffer.from(JSON.stringify({ schemaVersion: 1, identifier: appIdentifier, channel, version, hash: value, platform: 'win', arch: 'x64' }))],
+    ['Fetchfailed/bin/bun.exe', pe],
+    ['Fetchfailed/bin/launcher.exe', pe],
+    ['Fetchfailed/bin/ElectrobunCore.dll', pe],
+    ['Fetchfailed/Resources/version.json', Buffer.from(JSON.stringify({ schemaVersion: 1, identifier: appIdentifier, channel, version, hash: value, platform: 'win', arch: 'x64' }))],
   ])
   return { compressed: Buffer.from(Bun.zstdCompressSync(bytes)), tarSize: bytes.length, tarSha256: hash(bytes) }
 }
 
 function unixNativeArchive(platform, arch, version, value, channel = 'stable') {
-  const app = platform === 'macos' ? `${APP_NAME}.app` : 'FetchFailed'
+  const app = platform === 'macos' ? `${APP_NAME}.app` : 'Fetchfailed'
   const resources = `${app}/${platform === 'macos' ? 'Contents/Resources' : 'Resources'}`
   const bin = `${app}/${platform === 'macos' ? 'Contents/MacOS' : 'bin'}`
   const binary = nativeBinary(platform)
@@ -98,7 +98,7 @@ async function packagingFixture(t, platform = 'win', arch = platform === 'macos'
   await fs.mkdir(path.join(root, '.tmp'), { recursive: true })
   const directory = await fs.mkdtemp(path.join(root, '.tmp/packaging-'))
   t.after(() => fs.rm(directory, { recursive: true, force: true }))
-  const bundle = platform === 'macos' ? `${APP_NAME}.app` : 'FetchFailed', prefix = `stable-${platform}-${arch}`
+  const bundle = platform === 'macos' ? `${APP_NAME}.app` : 'Fetchfailed', prefix = `stable-${platform}-${arch}`
   const input = path.join(directory, 'input'), tree = path.join(directory, 'tree')
   const resources = path.join(tree, bundle, platform === 'macos' ? 'Contents/Resources' : 'Resources')
   const bin = path.join(tree, bundle, platform === 'macos' ? 'Contents/MacOS' : 'bin')
@@ -116,16 +116,16 @@ async function packagingFixture(t, platform = 'win', arch = platform === 'macos'
   const packed = spawnSync(process.platform === 'win32' ? 'tar.exe' : 'tar', ['-cf', tarFile, '-C', tree, bundle], { encoding: 'utf8' })
   assert.equal(packed.status, 0, packed.stderr)
   const tar = await fs.readFile(tarFile), archive = Buffer.from(Bun.zstdCompressSync(tar))
-  const manifest = { schemaVersion: 1, identifier: appIdentifier, version: local.version, channel: 'stable', platform, arch, hash: local.hash, artifact: { file: `${prefix}-FetchFailed${platform === 'macos' ? '.app' : ''}.tar.zst` } }
+  const manifest = { schemaVersion: 1, identifier: appIdentifier, version: local.version, channel: 'stable', platform, arch, hash: local.hash, artifact: { file: `${prefix}-Fetchfailed${platform === 'macos' ? '.app' : ''}.tar.zst` } }
   const v2 = { ...manifest, artifact: { ...manifest.artifact, tarSize: tar.length, tarSha256: hash(tar) } }
   await fs.writeFile(path.join(input, manifest.artifact.file), archive)
   await fs.writeFile(path.join(input, prefix + '-update.json'), JSON.stringify(manifest))
   await fs.writeFile(path.join(input, prefix + '-update-v2.json'), JSON.stringify(v2))
-  if (platform === 'win') await fs.writeFile(path.join(input, 'win-x64-FetchFailed-Setup.zip'), zipSync({
+  if (platform === 'win') await fs.writeFile(path.join(input, 'win-x64-Fetchfailed-Setup.zip'), zipSync({
     [`${APP_NAME}-Setup.exe`]: pe(), [`.installer/${APP_NAME}-Setup.metadata.json`]: Buffer.from(JSON.stringify({ name: APP_NAME, identifier: appIdentifier, channel: 'stable', hash: local.hash })), [`.installer/${APP_NAME}-Setup.tar.zst`]: archive,
   }))
   if (platform === 'win') await fs.writeFile(path.join(input, 'fetch-failed-1.2.3-win-x64.exe'), Buffer.concat([pe(true), randomBytes(1024 ** 2 + 1024)]))
-  if (platform === 'macos') await fs.writeFile(path.join(input, `macos-${arch}-FetchFailed.dmg`), 'fixture image: hdiutil verification runs on macOS CI')
+  if (platform === 'macos') await fs.writeFile(path.join(input, `macos-${arch}-Fetchfailed.dmg`), 'fixture image: hdiutil verification runs on macOS CI')
   if (platform === 'linux') {
     const setup = path.join(directory, 'setup')
     await fs.mkdir(setup)
@@ -135,7 +135,7 @@ async function packagingFixture(t, platform = 'win', arch = platform === 'macos'
     const setupTar = path.join(directory, 'setup.tar')
     const packed = spawnSync(process.platform === 'win32' ? 'tar.exe' : 'tar', ['-cf', setupTar, '-C', setup, '.'], { encoding: 'utf8' })
     assert.equal(packed.status, 0, packed.stderr)
-    await fs.writeFile(path.join(input, `linux-${arch}-FetchFailed-Setup.tar.gz`), Bun.gzipSync(await fs.readFile(setupTar)))
+    await fs.writeFile(path.join(input, `linux-${arch}-Fetchfailed-Setup.tar.gz`), Bun.gzipSync(await fs.readFile(setupTar)))
   }
   return { directory, input, options: { platform, arch, channel: 'stable', version: '1.2.3', nsis: platform === 'win' }, v2 }
 }
@@ -161,7 +161,7 @@ async function feedFixture(target, version, action, streaming = false) {
   try {
     const input = path.join(directory, 'native'); await fs.mkdir(input, { recursive: true })
     const binary = nativeBinary(target.platform)
-    const app = target.platform === 'macos' ? `${APP_NAME}.app` : 'FetchFailed'
+    const app = target.platform === 'macos' ? `${APP_NAME}.app` : 'Fetchfailed'
     const resources = `${app}/${target.platform === 'macos' ? 'Contents/Resources' : 'Resources'}`
     const bin = `${app}/${target.platform === 'macos' ? 'Contents/MacOS' : 'bin'}`
     const ext = target.platform === 'win' ? '.exe' : ''
@@ -205,16 +205,16 @@ test('имена артефактов, native headers и Windows version resourc
   const { createWindowsVersionResource } = await import('../../scripts/windows-version-resource.ts')
 
   assert.deepEqual(nativeArtifactNames({ platform: 'win', arch: 'x64', channel: 'stable', version: '1.2.3', nsis: true }).sort(), [
-    'stable-win-x64-update.json', 'stable-win-x64-update-v2.json', 'stable-win-x64-FetchFailed.tar.zst', 'win-x64-FetchFailed-Setup.zip', 'fetch-failed-1.2.3-win-x64.exe',
+    'stable-win-x64-update.json', 'stable-win-x64-update-v2.json', 'stable-win-x64-Fetchfailed.tar.zst', 'win-x64-Fetchfailed-Setup.zip', 'fetch-failed-1.2.3-win-x64.exe',
   ].sort())
   for (const arch of ['arm64', 'x64']) {
     const names = nativeArtifactNames({ platform: 'macos', arch, channel: 'stable', version: '1.2.3' })
-    assert.ok(names.includes(`macos-${arch}-FetchFailed.dmg`))
-    assert.ok(names.includes(`stable-macos-${arch}-FetchFailed.app.tar.zst`))
-    assert.ok(!names.includes(`stable-macos-${arch}-FetchFailed.tar.zst`))
+    assert.ok(names.includes(`macos-${arch}-Fetchfailed.dmg`))
+    assert.ok(names.includes(`stable-macos-${arch}-Fetchfailed.app.tar.zst`))
+    assert.ok(!names.includes(`stable-macos-${arch}-Fetchfailed.tar.zst`))
   }
-  assert.ok(nativeArtifactNames({ platform: 'linux', arch: 'x64', channel: 'stable', version: '1.2.3' }).includes('linux-x64-FetchFailed-Setup.tar.gz'))
-  assert.ok(nativeArtifactNames({ platform: 'win', arch: 'x64', channel: 'canary', version: '1.2.3' }).includes('canary-win-x64-FetchFailed-Setup-canary.zip'))
+  assert.ok(nativeArtifactNames({ platform: 'linux', arch: 'x64', channel: 'stable', version: '1.2.3' }).includes('linux-x64-Fetchfailed-Setup.tar.gz'))
+  assert.ok(nativeArtifactNames({ platform: 'win', arch: 'x64', channel: 'canary', version: '1.2.3' }).includes('canary-win-x64-Fetchfailed-Setup-canary.zip'))
   for (const platform of ['macos', 'linux']) {
     validateNativeExecutable(executable(platform, 'arm64'), platform, 'arm64')
     validateNativeExecutable(executable(platform, 'x64'), platform, 'x64')
@@ -510,7 +510,7 @@ test('повторная trusted Ed25519 verification не меняет checksum
   const { tarSize, tarSha256 } = archiveSet
   const name = channel + '-win-x64-update-v2.json'
   const canonical = channel + '-win-x64-update.json'
-  const file = channel + '-win-x64-FetchFailed.tar.zst'
+  const file = channel + '-win-x64-Fetchfailed.tar.zst'
   const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, identifier: appIdentifier, channel,
     version: '1.2.3', platform: 'win', arch: 'x64', hash: 'fixture123',
     installer: { file: 'fetch-failed-1.2.3-win-x64.exe', size: installerBytes.length, sha256: hash(installerBytes) },
@@ -534,7 +534,7 @@ test('повторная trusted Ed25519 verification не меняет checksum
   await fs.writeFile(path.join(directory, 'SHA256SUMS.txt'), 'tampered')
   await assert.rejects(verifySignedUpdateFeed(directory, '1.2.3', windowsTarget), /checksum/i)
   await fs.writeFile(path.join(directory, 'SHA256SUMS.txt'), originalChecksums)
-  const archivePath = path.join(directory, 'stable-win-x64-FetchFailed.tar.zst')
+  const archivePath = path.join(directory, 'stable-win-x64-Fetchfailed.tar.zst')
   const originalArchive = await fs.readFile(archivePath)
   const changedArchive = Buffer.from(originalArchive)
   changedArchive[0] ^= 1
@@ -671,7 +671,7 @@ test('release assembly связывает signed bytes с native выдачей 
   await fs.writeFile(path.join(output, 'unverified.zip'), 'extra')
   await assert.rejects(release.verifyPublication(output, '1.2.3'), /Unexpected/)
   await fs.rm(path.join(output, 'unverified.zip'))
-  await fs.appendFile(path.join(output, 'stable-win-x64-FetchFailed.tar.zst'), 'tamper')
+  await fs.appendFile(path.join(output, 'stable-win-x64-Fetchfailed.tar.zst'), 'tamper')
   const files = (await fs.readdir(output)).filter(file => file !== 'SHA256SUMS.txt')
   await fs.writeFile(path.join(output, 'SHA256SUMS.txt'), await checksumText(output, files))
   await assert.rejects(release.verifyPublication(output, '1.2.3'))

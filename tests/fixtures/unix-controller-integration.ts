@@ -18,7 +18,7 @@ const root = await realpath(Bun.argv[2]), bytes = Buffer.from("signed protocol f
 const local = { identifier: appIdentifier, platform: "linux" as const, arch: "x64" as const, channel: "stable" as const, version: "1.0.8", hash: "old123" }
 const installation = { platform: "linux" as const, kind: "appimage" as const, target: "/home/fixture/Xneon.AppImage" }
 const manifest = { schemaVersion: 1, identifier: local.identifier, platform: "linux", arch: "x64", channel: "stable", version: "1.0.9", hash: "next123",
-  artifact: { file: "stable-linux-x64-FetchFailed.tar.zst", downloadSize: 100, downloadSha256: "a".repeat(64), tarSize: 200, tarSha256: "b".repeat(64) },
+  artifact: { file: "stable-linux-x64-Fetchfailed.tar.zst", downloadSize: 100, downloadSha256: "a".repeat(64), tarSize: 200, tarSha256: "b".repeat(64) },
   distributions: { appimage: { file: "fetch-failed-1.0.9-x86_64.AppImage", downloadSize: bytes.length, downloadSha256: createHash("sha256").update(bytes).digest("hex") } } }
 const { privateKey, publicKey } = generateKeyPairSync("ed25519"), keys = { fixture: publicKey.export({ format: "pem", type: "spki" }).toString() }
 const manifestBytes = Buffer.from(JSON.stringify(manifest)), signature = Buffer.from(JSON.stringify({ keyId: "fixture", signature: sign(null, manifestBytes, privateKey).toString("base64") }))

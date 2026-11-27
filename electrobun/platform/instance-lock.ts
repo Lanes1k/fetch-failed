@@ -29,7 +29,7 @@ export function lockLauncherProfile(profile: string): boolean {
     CloseHandle: { args: ["ptr"], returns: "bool" },
   })
   const hash = createHash("sha256").update(profile.toLowerCase()).digest("hex").slice(0, 32)
-  const name = Buffer.from("Local\\FetchFailedBun-" + hash + "\0", "utf16le")
+  const name = Buffer.from("Local\\FetchfailedBun-" + hash + "\0", "utf16le")
   const handle = symbols.CreateMutexW(null, false, ptr(name))
   const error = symbols.GetLastError()
   if (!handle) throw new Error("Could not lock launcher profile: " + error)

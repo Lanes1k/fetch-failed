@@ -10,7 +10,7 @@ import {
   assertZstdSize, decompressUnixUpdateArchive, extractUnixUpdateArchive, inspectUnixUpdateTar,
 } from "../../electrobun/main/unix-update-archive"
 
-const root = "FetchFailed"
+const root = "Fetchfailed"
 const sha = (data: Buffer) => createHash("sha256").update(data).digest("hex")
 
 type Entry = { name: string; data?: string; type?: string; link?: string }
