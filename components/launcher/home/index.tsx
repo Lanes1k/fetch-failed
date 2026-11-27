@@ -1,4 +1,6 @@
+import { CONTENT_ENTER_DELAYED } from "../content-motion"
 import { useEffect, useMemo, useRef, useState } from "react"
+import { supportsQuickPlay } from "@xnlc/core/game-features"
 import { useAccounts } from "@/src/AccountsContext"
 import { getAvatarUrl } from "@/lib/home-page-shared"
 import { useHomeLaunch } from "@/src/hooks/use-home-launch"
@@ -10,9 +12,9 @@ import { NewsSection } from "./news"
 function getSavedLaunchPrefs(): { version?: string; modLoader?: string; loaderVersion?: string } {
   try {
     return {
-      version: localStorage.getItem("xneon-launcher:lastVersion") ?? undefined,
-      modLoader: localStorage.getItem("xneon-launcher:lastModLoader") ?? undefined,
-      loaderVersion: localStorage.getItem("xneon-launcher:lastLoaderVersion") ?? undefined,
+      version: localStorage.getItem("fetch-failed:lastVersion") ?? undefined,
+      modLoader: localStorage.getItem("fetch-failed:lastModLoader") ?? undefined,
+      loaderVersion: localStorage.getItem("fetch-failed:lastLoaderVersion") ?? undefined,
     }
   } catch {
     return {}
@@ -21,10 +23,10 @@ function getSavedLaunchPrefs(): { version?: string; modLoader?: string; loaderVe
 
 function saveHomeSelectionPrefs(version: string, modLoader: string, loaderVersion?: string) {
   try {
-    localStorage.setItem("xneon-launcher:lastVersion", version)
-    localStorage.setItem("xneon-launcher:lastModLoader", modLoader)
-    if (loaderVersion) localStorage.setItem("xneon-launcher:lastLoaderVersion", loaderVersion)
-    else localStorage.removeItem("xneon-launcher:lastLoaderVersion")
+    localStorage.setItem("fetch-failed:lastVersion", version)
+    localStorage.setItem("fetch-failed:lastModLoader", modLoader)
+    if (loaderVersion) localStorage.setItem("fetch-failed:lastLoaderVersion", loaderVersion)
+    else localStorage.removeItem("fetch-failed:lastLoaderVersion")
   } catch {
     // ignore storage errors
   }
@@ -37,8 +39,8 @@ function saveHomeSelectionPrefs(version: string, modLoader: string, loaderVersio
  */
 function consumeAutoLaunchBuild(): string | null {
   try {
-    const value = localStorage.getItem("xneon-launcher:autoLaunchBuild")
-    if (value) localStorage.removeItem("xneon-launcher:autoLaunchBuild")
+    const value = localStorage.getItem("fetch-failed:autoLaunchBuild")
+    if (value) localStorage.removeItem("fetch-failed:autoLaunchBuild")
     return value
   } catch {
     return null
@@ -47,15 +49,16 @@ function consumeAutoLaunchBuild(): string | null {
 
 export function HomePage() {
   const saved = getSavedLaunchPrefs()
-  const { accounts, activeAccount, setActiveAccount } = useAccounts()
+  const { accounts, activeAccount, setActiveAccount, avatarVersion } = useAccounts()
   const [selectedModLoader, setSelectedModLoader] = useState(saved.modLoader ?? "vanilla")
   const [selectedLoaderVersion, setSelectedLoaderVersion] = useState(saved.loaderVersion ?? "")
   const [accountComboOpen, setAccountComboOpen] = useState(false)
-  const { versions, versionsLoaded, selectedVersion, setSelectedVersion, buildIcons } = useHomeVersions(selectedModLoader, saved.version)
+  const { versions, versionsLoaded, selectedVersion, setSelectedVersion, buildIcons, buildMinecraftVersions } = useHomeVersions(selectedModLoader, saved.version)
+  const quickPlayAvailable = supportsQuickPlay(selectedModLoader === "instance" ? buildMinecraftVersions[selectedVersion] : selectedVersion)
   const { loaderVersions, loaderVersionsLoaded, defaultLoaderVersion } = useLoaderVersionOptions(selectedModLoader, selectedVersion)
   const account = activeAccount ?? accounts[0]
-  const activeAvatarUrl = useMemo(() => account ? getAvatarUrl(account, account.username) : "", [account])
-  const accountAvatarUrls = useMemo(() => Object.fromEntries(accounts.map(a => [a.id, getAvatarUrl(a, a.username)])), [accounts])
+  const activeAvatarUrl = useMemo(() => account ? getAvatarUrl(account, account.username, avatarVersion) : "", [account, avatarVersion])
+  const accountAvatarUrls = useMemo(() => Object.fromEntries(accounts.map(a => [a.id, getAvatarUrl(a, a.username, avatarVersion)])), [accounts, avatarVersion])
   const { isRunning, launchUi, launchDetails, handlePlay, handleQuickPlay } = useHomeLaunch({ account, selectedVersion, selectedModLoader, selectedLoaderVersion })
 
   // Play на карточке сборки привёл сюда с заявкой на запуск: ждём, пока выбор
@@ -98,7 +101,7 @@ export function HomePage() {
   }, [selectedLoaderVersion, selectedModLoader, selectedVersion])
 
   return (
-    <div className="flex h-[calc(100vh-5rem)] gap-5 animate-in fade-in-0 slide-in-from-bottom-2 duration-300 overflow-hidden items-start">
+    <div data-ui="home-index-div-1" data-component="home-page" id="home-page-root" className={`flex h-[calc(100vh-5rem)] gap-5 overflow-hidden items-start ${CONTENT_ENTER_DELAYED}`}>
       <HomeControls
         accounts={accounts}
         account={account}
@@ -123,8 +126,9 @@ export function HomePage() {
         isRunning={isRunning}
         onPlay={handlePlay}
         onQuickPlayLaunch={handleQuickPlay}
+        quickPlayAvailable={quickPlayAvailable}
       />
-      <div className="flex-1 overflow-hidden"><NewsSection /></div>
+      <div data-ui="home-index-div-2" id="home-news-container" className="flex-1 overflow-hidden"><NewsSection /></div>
     </div>
   )
 }

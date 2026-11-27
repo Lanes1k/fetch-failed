@@ -1,3 +1,7 @@
+import { IconFileCode } from "@tabler/icons-react"
+import { SERVICE_URLS } from "@xnlc/urls"
+import { IconPencil, IconPuzzle, IconVersions, IconSettings, IconCoffee, IconCpu, IconUsers, IconTerminal2, IconArrowRight, IconCreditCard } from "@tabler/icons-react"
+import { IconX as LauncherCancelIcon } from "@tabler/icons-react"
 import { useState, useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { IconPlayerPlay, IconServer, IconArrowLeft, IconCheck, IconFolderPlus, IconLoader2, IconShield, IconRouter, IconUpload, IconClipboard, IconExternalLink, IconGauge, IconCamera, IconTrash } from "@tabler/icons-react"
@@ -11,6 +15,7 @@ import { useHomeVersions } from "@/src/hooks/use-home-versions"
 import { useLoaderVersionOptions } from "@/src/hooks/use-loader-version-options"
 import { LoaderIcon } from "./instance/loader-icon"
 import { XnConnectLogo } from "./server/xn-connect-logo"
+import { SettingsSwitch } from "./settings/settings-switch"
 import { IconPickerModal } from "./instance/icon-picker-modal"
 import { EntityIcon } from "./instance/entity-icon"
 import type { JavaInstallation } from "./settings/types"
@@ -18,25 +23,27 @@ import type { JavaInstallation } from "./settings/types"
 interface ServerCreateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreate: (params: { name: string; gameVersion: string; modloader: string; modloaderVersion?: string; port?: number; javaPath?: string; relayEnabled?: boolean; xmx?: number; xms?: number; onlineMode?: boolean; maxPlayers?: number; customJarPath?: string; icon?: string; extraJavaArgs?: string }) => Promise<unknown>
+  onCreate: (params: { name: string; description?: string; gameVersion: string; modloader: string; modloaderVersion?: string; port?: number; javaPath?: string; relayEnabled?: boolean; xmx?: number; xms?: number; onlineMode?: boolean; maxPlayers?: number; customJarPath?: string; icon?: string; extraJavaArgs?: string }) => Promise<unknown>
 }
 
 const MODLOADERS = [
-  { id: "vanilla", label: "fetch failed" },
-  { id: "forge", label: "fetch failed" },
-  { id: "fabric", label: "fetch failed" },
-  { id: "quilt", label: "fetch failed" },
-  { id: "neoforge", label: "fetch failed" },
-  { id: "paper", label: "fetch failed" },
-  { id: "spigot", label: "fetch failed" },
-  { id: "bukkit", label: "fetch failed" },
-  { id: "purpur", label: "fetch failed" },
-  { id: "folia", label: "fetch failed" },
-  { id: "sponge", label: "fetch failed" },
-  { id: "bungeecord", label: "fetch failed" },
-  { id: "velocity", label: "fetch failed" },
-  { id: "waterfall", label: "fetch failed" },
+  { id: "vanilla", label: "Vanilla" },
+  { id: "forge", label: "Forge" },
+  { id: "fabric", label: "Fabric" },
+  { id: "quilt", label: "Quilt" },
+  { id: "neoforge", label: "NeoForge" },
+  { id: "paper", label: "Paper" },
+  { id: "spigot", label: "Spigot" },
+  { id: "bukkit", label: "Bukkit" },
+  { id: "purpur", label: "Purpur" },
+  { id: "folia", label: "Folia" },
+  { id: "sponge", label: "Sponge" },
+  { id: "bungeecord", label: "BungeeCord" },
+  { id: "velocity", label: "Velocity" },
+  { id: "waterfall", label: "Waterfall" },
 ]
+
+const STEP_ICONS = { name: IconPencil, modloader: IconPuzzle, version: IconVersions, port: IconRouter, settings: IconSettings, java: IconCoffee, connect: IconRouter }
 
 const STEPS_FULL = ["name", "modloader", "version", "port", "settings", "java", "connect"] as const
 const STEPS_CUSTOM = ["name", "modloader", "port", "settings", "java", "connect"] as const
@@ -58,6 +65,7 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
   const [usage, setUsage] = useState<XnConnectUsage | null>(null)
   const [usageLimitShown, setUsageLimitShown] = useState(false)
   const [name, setName] = useState("")
+  const [description, setDescription] = useState("")
   const [icon, setIcon] = useState("")
   const [showIconPicker, setShowIconPicker] = useState(false)
   const [modloader, setModloader] = useState("vanilla")
@@ -107,9 +115,9 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
     if (modloader !== "sponge") return
     let cancelled = false
     Promise.all([
-      window.electronAPI?.getSpongeSupported("spongevanilla") ?? Promise.resolve([]),
-      window.electronAPI?.getSpongeSupported("spongeforge") ?? Promise.resolve([]),
-      window.electronAPI?.getSpongeSupported("spongeneo") ?? Promise.resolve([]),
+      window.electrobunAPI?.getSpongeSupported("spongevanilla") ?? Promise.resolve([]),
+      window.electrobunAPI?.getSpongeSupported("spongeforge") ?? Promise.resolve([]),
+      window.electrobunAPI?.getSpongeSupported("spongeneo") ?? Promise.resolve([]),
     ]).then(([sv, sf, sn]) => {
       if (!cancelled) {
         setSpongeSupported({
@@ -147,6 +155,7 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
     if (!open) return
     setStep("name")
     setName("")
+    setDescription("")
     setIcon("")
     setShowIconPicker(false)
     setModloader("vanilla")
@@ -169,7 +178,7 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
     setAuthing(false)
     setAuthUrl(null)
     setAuthDone(false)
-    window.electronAPI?.getSetting("javaPath").then(p => setGlobalJavaPath(p ?? ""))
+    window.electrobunAPI?.getSetting("javaPath").then(p => setGlobalJavaPath(p ?? ""))
   }, [open])
 
   useEffect(() => {
@@ -181,14 +190,14 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
   useEffect(() => {
     if (!open) return
     // Tunnel usage counter (used/max/plan) for the XN-Connect step
-    window.electronAPI?.xnConnectUsage().then(u => { if (u) setUsage(u) })
-    return window.electronAPI?.onXnConnectUsage((u) => setUsage(u))
+    window.electrobunAPI?.xnConnectUsage().then(u => { if (u) setUsage(u) })
+    return window.electrobunAPI?.onXnConnectUsage((u) => setUsage(u))
   }, [open])
 
   useEffect(() => {
     if (!open || step !== "java") return
     setLoadingJava(true)
-    void window.electronAPI?.detectJavaInstallations().then(installs => {
+    void window.electrobunAPI?.detectJavaInstallations().then(installs => {
       setDetectedJava(installs ?? [])
       setLoadingJava(false)
     }).catch(() => {
@@ -199,7 +208,7 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
 
   useEffect(() => {
     if (!open) return
-    return window.electronAPI?.onXnConnectAuthState((data) => {
+    return window.electrobunAPI?.onXnConnectAuthState((data) => {
       const s = data.state
       if (s.status === "auth_required" && "authUrl" in s && s.authUrl) {
         setAuthUrl(s.authUrl)
@@ -236,7 +245,7 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
       setAnalyzingJar(true)
       setJarError(null)
       try {
-        const info = await window.electronAPI?.mcServerAnalyzeJar(customJarPath)
+        const info = await window.electrobunAPI?.mcServerAnalyzeJar(customJarPath)
         if (info?.error) {
           setJarError(info.error)
           return
@@ -273,7 +282,7 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
     setAuthing(true)
     setAuthUrl(null)
     try {
-      const ok = await window.electronAPI?.xnConnectAuthorize()
+      const ok = await window.electrobunAPI?.xnConnectAuthorize()
       if (ok) setAuthDone(true)
     } finally {
       setAuthing(false)
@@ -286,6 +295,7 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
     try {
       const finalLoader = modloader === "sponge" ? spongeType : modloader
       await onCreate({
+        description: description.trim(),
         name: name.trim(),
         gameVersion: selectedVersion,
         modloader: finalLoader,
@@ -313,122 +323,63 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[520px] !max-w-[90vw] sm:!max-w-[520px] p-0 gap-0 overflow-hidden">
+      <DialogContent data-window="server-create-dialog-window-1" className="!w-[580px] !max-w-[90vw] sm:!max-w-[580px] max-h-[85dvh] gap-4 overflow-y-auto rounded-2xl bg-card p-6">
         {/* Step indicator */}
-        <div className="px-6 pt-5 pb-4">
-          <DialogHeader className="mb-4">
+        <div data-ui="server-create-dialog-div-1" data-component="server-create-dialog" className="space-y-5">
+          <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+              <div data-ui="server-create-dialog-div-2" className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
                 <IconServer className="w-4 h-4 text-primary" />
               </div>
               {t("servers.addServer")}
             </DialogTitle>
           </DialogHeader>
 
-          <div className="flex items-center gap-2">
-            {steps.map((s, i) => (
-              <div key={s} className="flex items-center gap-2 flex-1">
-                <div className={cn(
-                  "flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold transition-all flex-shrink-0",
-                  i < stepIndex && "bg-primary text-primary-foreground",
-                  i === stepIndex && "bg-primary/20 text-primary ring-2 ring-primary/30",
-                  i > stepIndex && "bg-muted text-muted-foreground",
-                )}>
-                  {i < stepIndex ? <IconCheck className="w-3.5 h-3.5" /> : i + 1}
-                </div>
-                {i < steps.length - 1 && (
-                  <div className={cn(
-                    "h-0.5 flex-1 rounded-full transition-colors",
-                    i < stepIndex ? "bg-primary" : "bg-muted",
-                  )} />
-                )}
+          <div data-ui="server-create-dialog-div-3" className="grid grid-cols-7 gap-2 px-1">
+            {steps.map((item, index) => {
+              const StepIcon = STEP_ICONS[item]
+              const active = item === step
+              return <div key={item} aria-current={active ? "step" : undefined} className="relative flex min-w-0 flex-col items-center gap-2">
+                {index < steps.length - 1 && <span aria-hidden="true" className={cn("pointer-events-none absolute left-[calc(50%+1.25rem)] top-4 h-px w-[calc(100%-2rem)]", index < stepIndex ? "bg-primary/50" : "bg-border")} />}
+                <span className={cn("flex size-8 items-center justify-center rounded-full border transition-colors", active ? "border-primary/50 bg-primary/15 text-primary ring-2 ring-primary/10" : index < stepIndex ? "border-primary/25 bg-primary/10 text-primary" : "border-border/70 bg-muted/30 text-muted-foreground")}>
+                  {index < stepIndex ? <IconCheck className="size-3.5" strokeWidth={1.75} /> : <StepIcon className="size-3.5" strokeWidth={1.75} />}
+                </span>
+                <span className={cn("max-w-full truncate text-[10px] font-medium", active ? "text-primary" : "text-muted-foreground")}>{t(STEP_KEYS[item])}</span>
               </div>
-            ))}
-          </div>
-          <div className="flex justify-between mt-2">
-            {steps.map(s => (
-              <span key={s} className={cn(
-                "text-[10px] font-medium w-7 text-center",
-                s === step ? "text-primary" : "text-muted-foreground",
-              )}>
-                {t(STEP_KEYS[s as (typeof STEPS_FULL)[number]])}
-              </span>
-            ))}
+            })}
           </div>
         </div>
 
-        <div className="h-px bg-border" />
-
         {/* Step content */}
-        <div className="px-6 py-5 min-h-[280px]">
+        <div data-ui="server-create-dialog-div-9" data-component="server-create-dialog" className="min-h-0 rounded-2xl border border-border bg-card p-4">
           {step === "name" && (
-            <div className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground mb-1">{t("servers.create.nameTitle")}</h3>
-                <p className="text-xs text-muted-foreground">{t("servers.create.nameDesc")}</p>
+            <div data-ui="server-create-dialog-div-10" className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
+
+              <div data-ui="server-create-dialog-div-12" className="flex flex-col items-center gap-2">
+                <button type="button" onClick={() => setShowIconPicker(true)} title={t("servers.create.iconTitle")} aria-label={t("servers.create.iconTitle")} className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted/40 text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
+                  {icon ? <EntityIcon src={icon} className="size-full p-2 text-primary" imgClassName="size-full object-cover" /> : <IconCamera className="size-6 text-muted-foreground" strokeWidth={1.75} />}
+                </button>
+                {icon && <button type="button" onClick={() => setIcon("")} className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><IconTrash className="size-3.5" />{t("common.delete")}</button>}
               </div>
 
-              <div className="flex items-center gap-4 p-3 rounded-2xl border border-border bg-muted/20">
-                <div
-                  className="w-16 h-16 rounded-xl bg-muted/60 overflow-hidden border border-border cursor-pointer hover:border-primary/50 transition-colors flex-shrink-0 flex items-center justify-center relative group"
-                  onClick={() => setShowIconPicker(true)}
-                  title={t("servers.create.iconTitle")}
-                >
-                  {icon ? (
-                    <EntityIcon src={icon} className="w-full h-full p-2 text-primary" imgClassName="w-full h-full object-cover" />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center text-muted-foreground group-hover:text-primary transition-colors">
-                      <IconCamera className="w-6 h-6" />
-                      <span className="text-[10px] mt-0.5 font-medium">{t("servers.create.iconLabel")}</span>
-                    </div>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowIconPicker(true)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                    >
-                      {icon ? t("servers.create.iconChange") : t("servers.create.iconChoose")}
-                    </button>
-                    {icon && (
-                      <button
-                        type="button"
-                        onClick={() => setIcon("")}
-                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                      >
-                        <IconTrash className="w-3.5 h-3.5" />
-                        {t("common.delete")}
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-muted-foreground mt-1.5">
-                    {t("servers.create.iconHint")}
-                  </p>
-                </div>
-              </div>
-
-              <input
+              <input data-ui="server-create-dialog-input-1"
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder={t("servers.myServer")}
+                placeholder={t("builds.name")}
+                aria-label={t("builds.name")}
                 className="w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary transition-colors"
                 autoFocus
                 onKeyDown={e => e.key === "Enter" && canNext() && handleNext()}
               />
+              <input value={description} onChange={event => setDescription(event.target.value)} placeholder={t("builds.description")} aria-label={t("builds.description")} maxLength={2000} className="w-full rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-colors focus:border-primary" />
             </div>
           )}
 
           {step === "modloader" && (
-            <div className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground mb-1">{t("servers.create.modloaderTitle")}</h3>
-                <p className="text-xs text-muted-foreground">{t("servers.create.modloaderDesc")}</p>
-              </div>
-              <div className="grid grid-cols-2 gap-2.5 max-h-[190px] overflow-y-auto pr-1">
+            <div data-ui="server-create-dialog-div-17" className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
+              <div data-ui="server-create-dialog-div-19" className="grid grid-cols-2 gap-2.5 max-h-[190px] overflow-y-auto pr-1">
                 {MODLOADERS.map(loader => (
-                  <button
+                  <button data-ui="server-create-dialog-button-3"
                     key={loader.id}
                     type="button"
                     onClick={() => { setModloader(loader.id); setModloaderVersion(""); setCustomJarPath("") }}
@@ -439,18 +390,21 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                         : "border-border bg-muted/20 hover:border-primary/40 hover:bg-muted/30"
                     )}
                   >
-                    <div className={cn(
+                    <div data-ui="server-create-dialog-div-20" className={cn(
                       "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
                       modloader === loader.id ? "bg-primary/20" : "bg-muted/50",
                     )}>
-                      <LoaderIcon loaderId={loader.id} className="w-5 h-5 text-muted-foreground" />
+                      <LoaderIcon
+                        loaderId={loader.id}
+                        className={cn("w-5 h-5", modloader === loader.id ? "text-primary" : "text-muted-foreground")}
+                      />
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-foreground">{loader.label}</p>
-                      <p className="text-[11px] text-muted-foreground truncate">{loaderDesc(loader.id)}</p>
+                    <div data-ui="server-create-dialog-div-21" className="min-w-0">
+                      <p data-ui="server-create-dialog-p-4" className="text-sm font-semibold text-foreground">{loader.label}</p>
+                      <p data-ui="server-create-dialog-p-5" className="text-[11px] text-muted-foreground truncate">{loaderDesc(loader.id)}</p>
                     </div>
                     {modloader === loader.id && (
-                      <div className="ml-auto w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                      <div data-ui="server-create-dialog-div-22" className="ml-auto w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
                         <IconCheck className="w-3 h-3 text-primary-foreground" strokeWidth={2.5} />
                       </div>
                     )}
@@ -459,24 +413,24 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
               </div>
 
               {/* Custom JAR */}
-              <div className="space-y-2">
-                <div className="h-px bg-border" />
-                <label className="text-xs font-medium text-muted-foreground">{t("servers.create.customJar")}</label>
-                <input
+              <div data-ui="server-create-dialog-div-23" className="space-y-2">
+                <div data-ui="server-create-dialog-div-24" className="h-px bg-border" />
+                <label data-ui="server-create-dialog-label-1" className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><IconFileCode className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("servers.create.customJar")}</label>
+                <input data-ui="server-create-dialog-input-2"
                   ref={customJarInputRef}
                   type="file"
                   accept=".jar"
                   className="hidden"
-                  onChange={e => {
+                  onChange={async e => {
                     const file = e.target.files?.[0]
+                    e.currentTarget.value = ""
                     if (file) {
-                      const filePath = window.electronAPI?.getFilePath(file)
+                      const filePath = await window.electrobunAPI?.getFilePath(file)
                       if (filePath) setCustomJarPath(filePath)
                     }
-                    e.target.value = ""
                   }}
                 />
-                <button
+                <button data-ui="server-create-dialog-button-4"
                   type="button"
                   onClick={() => customJarInputRef.current?.click()}
                   className={cn(
@@ -486,27 +440,27 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                       : "border-dashed border-border bg-muted/20 hover:border-accent hover:bg-accent/5"
                   )}
                 >
-                  <div className={cn(
+                  <div data-ui="server-create-dialog-div-25" className={cn(
                     "w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0",
                     customJarPath ? "bg-primary/20" : "bg-muted/50",
                   )}>
                     <IconUpload className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
                   </div>
-                  <div className="min-w-0 flex-1">
+                  <div data-ui="server-create-dialog-div-26" className="min-w-0 flex-1">
                     {customJarPath ? (
                       <>
-                        <p className="text-sm font-medium text-foreground truncate">{customJarPath.split(/[\\/]/).pop()}</p>
-                        <p className="text-[11px] text-primary mt-0.5">{t("servers.create.customJarSelected")}</p>
+                        <p data-ui="server-create-dialog-p-6" className="text-sm font-medium text-foreground truncate">{customJarPath.split(/[\\/]/).pop()}</p>
+                        <p data-ui="server-create-dialog-p-7" className="text-[11px] text-primary mt-0.5">{t("servers.create.customJarSelected")}</p>
                       </>
                     ) : (
                       <>
-                        <p className="text-sm font-medium text-foreground">{t("servers.create.customJarExample")}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">{t("servers.create.customJarDesc")}</p>
+                        <p data-ui="server-create-dialog-p-8" className="text-sm font-medium text-foreground">{t("servers.create.customJarExample")}</p>
+                        <p data-ui="server-create-dialog-p-9" className="text-[11px] text-muted-foreground mt-0.5">{t("servers.create.customJarDesc")}</p>
                       </>
                     )}
                   </div>
                   {customJarPath && (
-                    <button
+                    <button data-ui="server-create-dialog-button-5"
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setCustomJarPath("") }}
                       className="text-xs text-muted-foreground hover:text-destructive transition-colors shrink-0"
@@ -520,24 +474,18 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
           )}
 
           {jarError && (
-            <div className="mt-3 p-3 rounded-xl border border-destructive/30 bg-destructive/10 text-xs text-destructive">
+            <div data-ui="server-create-dialog-div-27" className="mt-3 p-3 rounded-xl border border-destructive/30 bg-destructive/10 text-xs text-destructive">
               {jarError}
             </div>
           )}
 
           {step === "version" && (
-            <div className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground mb-1">{t("servers.create.versionTitle")}</h3>
-                <p className="text-xs text-muted-foreground">
-                  {modloader === "velocity" ? t("servers.create.versionProxy") : t("servers.create.versionDesc")}
-                </p>
-              </div>
+            <div data-ui="server-create-dialog-div-28" className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
 
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-muted-foreground">
-                    {modloader === "velocity" ? "fetch failed" : "Minecraft"}
+              <div data-ui="server-create-dialog-div-30" className="space-y-3">
+                <div data-ui="server-create-dialog-div-31" className="space-y-2">
+                  <label data-ui="server-create-dialog-label-2" className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><IconVersions className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />
+                    {modloader === "velocity" ? "Velocity version" : "Minecraft"}
                   </label>
                   <Select value={selectedVersion} onValueChange={setSelectedVersion}>
                     <SelectTrigger className="w-full h-[42px] rounded-xl bg-muted/50 border-border text-foreground text-sm">
@@ -545,9 +493,9 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                     </SelectTrigger>
                     <SelectContent>
                       {!versionsLoaded ? (
-                        <div className="px-3 py-2 text-sm text-muted-foreground">{t("servers.create.loading")}</div>
+                        <div data-ui="server-create-dialog-div-32" className="px-3 py-2 text-sm text-muted-foreground">{t("servers.create.loading")}</div>
                       ) : versions.length === 0 ? (
-                        <div className="px-3 py-2 text-sm text-muted-foreground">{t("home.noLoaderVersions")}</div>
+                        <div data-ui="server-create-dialog-div-33" className="px-3 py-2 text-sm text-muted-foreground">{t("home.noLoaderVersions")}</div>
                       ) : (
                         versions.map(v => (
                           <SelectItem key={v} value={v}>{v}</SelectItem>
@@ -558,20 +506,20 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                 </div>
 
                 {modloader === "sponge" && (
-                  <div className="space-y-2">
-                    <label className="text-xs font-medium text-muted-foreground">{t("servers.create.spongeType")}</label>
-                    <div className="grid grid-cols-3 gap-2">
+                  <div data-ui="server-create-dialog-div-34" className="space-y-2">
+                    <label data-ui="server-create-dialog-label-3" className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><IconPuzzle className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("servers.create.spongeType")}</label>
+                    <div data-ui="server-create-dialog-div-35" className="grid grid-cols-3 gap-2">
                       {[
-                        { id: "spongevanilla" as const, loaderIconId: "vanilla", label: "fetch failed", desc: t("servers.create.spongevanillaDesc") },
-                        { id: "spongeforge" as const, loaderIconId: "forge", label: "fetch failed", desc: t("servers.create.spongeforgeDesc") },
-                        { id: "spongeneo" as const, loaderIconId: "neoforge", label: "fetch failed", desc: t("servers.create.spongeneoDesc") },
+                        { id: "spongevanilla" as const, loaderIconId: "vanilla", label: "SpongeVanilla", desc: t("servers.create.spongevanillaDesc") },
+                        { id: "spongeforge" as const, loaderIconId: "forge", label: "SpongeForge", desc: t("servers.create.spongeforgeDesc") },
+                        { id: "spongeneo" as const, loaderIconId: "neoforge", label: "SpongeNeo", desc: t("servers.create.spongeneoDesc") },
                       ].map(type => {
                         const isSupported = selectedVersion
                           ? spongeSupported[type.id].length === 0 || spongeSupported[type.id].includes(selectedVersion)
                           : true
 
                         return (
-                          <button
+                          <button data-ui="server-create-dialog-button-6"
                             key={type.id}
                             type="button"
                             disabled={!isSupported}
@@ -588,16 +536,16 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                                 : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                             )}
                           >
-                            <div className="flex items-center gap-2 w-full">
-                              <div className={cn(
+                            <div data-ui="server-create-dialog-div-36" className="flex items-center gap-2 w-full">
+                              <div data-ui="server-create-dialog-div-37" className={cn(
                                 "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
                                 isSupported && spongeType === type.id ? "bg-primary/25 text-primary" : "bg-muted/60 text-muted-foreground"
                               )}>
                                 <LoaderIcon loaderId={type.loaderIconId} className="w-3.5 h-3.5" />
                               </div>
-                              <span className="text-xs font-semibold truncate text-foreground">{type.label}</span>
+                              <span data-ui="server-create-dialog-span-3" className="text-xs font-semibold truncate text-foreground">{type.label}</span>
                             </div>
-                            <span className="text-[10px] text-muted-foreground leading-tight">
+                            <span data-ui="server-create-dialog-span-4" className="text-[10px] text-muted-foreground leading-tight">
                               {!isSupported ? t("servers.create.notForMc") : type.desc}
                             </span>
                           </button>
@@ -608,8 +556,8 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                 )}
 
                 {requiresLoaderVersion && (
-                  <div className="space-y-2">
-                    <label className="text-xs font-medium text-muted-foreground">{loaderName} fetch failed</label>
+                  <div data-ui="server-create-dialog-div-38" className="space-y-2">
+                    <label data-ui="server-create-dialog-label-4" className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><IconVersions className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{loaderName} version</label>
                     <Select
                       value={modloaderVersion}
                       onValueChange={setModloaderVersion}
@@ -620,9 +568,9 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                       </SelectTrigger>
                       <SelectContent>
                         {!loaderVersionsLoaded ? (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">{t("servers.create.loading")}</div>
+                          <div data-ui="server-create-dialog-div-39" className="px-3 py-2 text-sm text-muted-foreground">{t("servers.create.loading")}</div>
                         ) : loaderVersions.length === 0 ? (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">{t("home.noLoaderVersions")}</div>
+                          <div data-ui="server-create-dialog-div-40" className="px-3 py-2 text-sm text-muted-foreground">{t("home.noLoaderVersions")}</div>
                         ) : (
                           loaderVersions.map(v => (
                             <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>
@@ -637,21 +585,21 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
           )}
 
           {step === "port" && (
-            <div className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
+            <div data-ui="server-create-dialog-div-41" className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
               {detectedVersion && (
-                <div className="p-3 rounded-xl border border-primary/30 bg-primary/10 flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
+                <div data-ui="server-create-dialog-div-42" className="p-3 rounded-xl border border-primary/30 bg-primary/10 flex items-center gap-3">
+                  <div data-ui="server-create-dialog-div-43" className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
                     <IconCheck className="w-4 h-4 text-primary" />
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">{t("servers.create.portDetected")}</p>
-                    <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground truncate">
-                      <span>{detectedVersion}</span>
+                  <div data-ui="server-create-dialog-div-44" className="min-w-0">
+                    <p data-ui="server-create-dialog-p-11" className="text-xs text-muted-foreground">{t("servers.create.portDetected")}</p>
+                    <div data-ui="server-create-dialog-div-45" className="flex items-center gap-1.5 text-sm font-semibold text-foreground truncate">
+                      <span data-ui="server-create-dialog-span-5">{detectedVersion}</span>
                       {detectedLoader && (
                         <>
-                          <span>·</span>
+                          <span data-ui="server-create-dialog-span-6">·</span>
                           <LoaderIcon loaderId={detectedLoader.toLowerCase()} className="w-4 h-4 flex-shrink-0" />
-                          <span className="capitalize">{detectedLoader}</span>
+                          <span data-ui="server-create-dialog-span-7" className="capitalize">{detectedLoader}</span>
                         </>
                       )}
                     </div>
@@ -659,14 +607,9 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                 </div>
               )}
 
-              <div>
-                <h3 className="text-sm font-semibold text-foreground mb-1">{t("servers.create.portTitle")}</h3>
-                <p className="text-xs text-muted-foreground">{t("servers.create.portDesc")}</p>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">{t("servers.create.portLabel")}</label>
-                <input
+              <div data-ui="server-create-dialog-div-47" className="space-y-2">
+                <label data-ui="server-create-dialog-label-5" className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><IconRouter className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("servers.create.portLabel")}</label>
+                <input data-ui="server-create-dialog-input-3"
                   type="number"
                   value={port}
                   onChange={e => setPort(e.target.value)}
@@ -679,14 +622,10 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
           )}
 
           {step === "settings" && (
-            <div className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground mb-1">{t("servers.create.settingsTitle")}</h3>
-                <p className="text-xs text-muted-foreground">{t("servers.create.settingsDesc")}</p>
-              </div>
+            <div data-ui="server-create-dialog-div-48" className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
 
-              <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
-                <label className="block text-xs font-medium text-foreground">{t("servers.create.memoryAllocated")}</label>
+              <div data-ui="server-create-dialog-div-50" className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
+                <label data-ui="server-create-dialog-label-6" className="flex items-center gap-2 text-xs font-medium text-foreground"><IconCpu className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("servers.create.memoryAllocated")}</label>
                 <MemorySlider
                   value={xmx}
                   min={512}
@@ -701,8 +640,8 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                   }}
                 />
               </div>
-              <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
-                <label className="block text-xs font-medium text-foreground">{t("servers.create.memoryInitial")}</label>
+              <div data-ui="server-create-dialog-div-51" className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
+                <label data-ui="server-create-dialog-label-7" className="flex items-center gap-2 text-xs font-medium text-foreground"><IconCpu className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("servers.create.memoryInitial")}</label>
                 <MemorySlider
                   value={xms}
                   min={256}
@@ -713,10 +652,10 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-muted-foreground">{t("servers.create.maxPlayers")}</label>
-                  <input
+              <div data-ui="server-create-dialog-div-52" className="grid grid-cols-2 gap-3">
+                <div data-ui="server-create-dialog-div-53" className="space-y-2">
+                  <label data-ui="server-create-dialog-label-8" className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><IconUsers className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("servers.create.maxPlayers")}</label>
+                  <input data-ui="server-create-dialog-input-4"
                     type="number"
                     value={maxPlayers}
                     onChange={e => setMaxPlayers(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}
@@ -725,35 +664,18 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                     className="w-full px-4 py-2.5 rounded-xl bg-muted/50 border border-border text-foreground text-sm font-mono focus:outline-none focus:border-primary transition-colors"
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-muted-foreground">{t("servers.create.pirateMode")}</label>
-                  <button
-                    type="button"
-                    onClick={() => setOnlineMode(!onlineMode)}
-                    className={cn(
-                      "w-full flex items-center justify-between px-4 py-2.5 rounded-xl border transition-all",
-                      !onlineMode
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-muted/30"
-                    )}
-                  >
-                    <span className="text-sm text-foreground">{!onlineMode ? t("servers.create.on") : t("servers.create.off")}</span>
-                    <div className={cn(
-                      "relative w-9 h-5 rounded-full transition-colors",
-                      !onlineMode ? "bg-primary" : "bg-muted"
-                    )}>
-                      <div className={cn(
-                        "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow-sm",
-                        !onlineMode ? "translate-x-4.5" : "translate-x-0.5"
-                      )} />
-                    </div>
-                  </button>
+                <div data-ui="server-create-dialog-div-54" className="space-y-2">
+                  <div data-ui="server-create-dialog-label-9" className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><IconShield className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("servers.create.pirateMode")}</div>
+                  <div className="flex items-center justify-between rounded-xl border border-border bg-muted/30 px-4 py-2.5">
+                    <span data-ui="server-create-dialog-span-8" className="text-sm text-foreground">{!onlineMode ? t("servers.create.on") : t("servers.create.off")}</span>
+                    <SettingsSwitch label={t("servers.create.pirateMode")} checked={!onlineMode} onCheckedChange={enabled => setOnlineMode(!enabled)} />
+                  </div>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">{t("settings.java.args")}</label>
-                <input
+              <div data-ui="server-create-dialog-div-57" className="space-y-2">
+                <label data-ui="server-create-dialog-label-10" className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><IconTerminal2 className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("settings.java.args")}</label>
+                <input data-ui="server-create-dialog-input-5"
                   type="text"
                   value={extraJavaArgs}
                   onChange={e => setExtraJavaArgs(e.target.value)}
@@ -765,15 +687,11 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
           )}
 
           {step === "java" && (
-            <div className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground mb-1">{t("servers.create.javaTitle")}</h3>
-                <p className="text-xs text-muted-foreground">{t("servers.create.javaDesc")}</p>
-              </div>
+            <div data-ui="server-create-dialog-div-58" className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
 
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">{t("servers.create.javaExecutable")}</label>
-                <button
+              <div data-ui="server-create-dialog-div-60" className="space-y-2">
+                <label data-ui="server-create-dialog-label-11" className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><IconCoffee className="size-3.5 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("servers.create.javaExecutable")}</label>
+                <button data-ui="server-create-dialog-button-8"
                   type="button"
                   onClick={() => setJavaPath("auto")}
                   className={cn(
@@ -783,20 +701,20 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                       : "border-border bg-muted/30 hover:border-primary/50 hover:bg-muted/50"
                   )}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="font-medium text-foreground">{t("servers.create.autoJava")}</div>
-                    <span className={cn(
+                  <div data-ui="server-create-dialog-div-61" className="flex items-center justify-between">
+                    <div data-ui="server-create-dialog-div-62" className="font-medium text-foreground">{t("servers.create.autoJava")}</div>
+                    <span data-ui="server-create-dialog-span-9" className={cn(
                       "text-xs px-2 py-1 rounded-md font-medium",
                       javaPath === "auto" ? "bg-primary/20 text-primary" : "bg-muted/50 text-muted-foreground"
                     )}>
                       {javaPath === "auto" ? t("servers.create.selected") : t("servers.create.select")}
                     </span>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">{t("servers.create.autoJavaDesc")}</div>
+                  <div data-ui="server-create-dialog-div-63" className="text-xs text-muted-foreground mt-1">{t("servers.create.autoJavaDesc")}</div>
                 </button>
 
                 {globalJavaPath && (
-                  <button
+                  <button data-ui="server-create-dialog-button-9"
                     type="button"
                     onClick={() => setJavaPath("")}
                     className={cn(
@@ -806,30 +724,30 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                         : "border-border bg-muted/30 hover:border-primary/50 hover:bg-muted/50"
                     )}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="font-medium text-foreground text-sm">{t("servers.create.globalJava")}</div>
-                      <span className={cn(
+                    <div data-ui="server-create-dialog-div-64" className="flex items-center justify-between">
+                      <div data-ui="server-create-dialog-div-65" className="font-medium text-foreground text-sm">{t("servers.create.globalJava")}</div>
+                      <span data-ui="server-create-dialog-span-10" className={cn(
                         "shrink-0 text-xs px-2 py-1 rounded-md font-medium",
                         javaPath === "" ? "bg-primary/20 text-primary" : "bg-muted/50 text-muted-foreground"
                       )}>
                         {javaPath === "" ? t("servers.create.selected") : t("servers.create.select")}
                       </span>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1 truncate">{globalJavaPath}</div>
+                    <div data-ui="server-create-dialog-div-66" className="text-xs text-muted-foreground mt-1 truncate">{globalJavaPath}</div>
                   </button>
                 )}
 
                 {loadingJava ? (
-                  <div className="w-full p-4 rounded-xl border border-border bg-muted/30 flex items-center justify-center gap-2">
+                  <div data-ui="server-create-dialog-div-67" className="w-full p-4 rounded-xl border border-border bg-muted/30 flex items-center justify-center gap-2">
                     <IconLoader2 className="w-4 h-4 animate-spin text-primary" strokeWidth={1.5} />
-                    <span className="text-sm text-muted-foreground">{t("servers.create.searchingJava")}</span>
+                    <span data-ui="server-create-dialog-span-11" className="text-sm text-muted-foreground">{t("servers.create.searchingJava")}</span>
                   </div>
                 ) : detectedJava.length > 0 ? (
-                  <div className="space-y-2">
-                    <div className="text-xs font-medium text-muted-foreground px-1">{t("servers.create.detectedInstalls")}</div>
-                    <div className="max-h-[200px] space-y-2 overflow-y-auto pr-1">
+                  <div data-ui="server-create-dialog-div-68" className="space-y-2">
+                    <div data-ui="server-create-dialog-div-69" className="text-xs font-medium text-muted-foreground px-1">{t("servers.create.detectedInstalls")}</div>
+                    <div data-ui="server-create-dialog-div-70" className="max-h-[200px] space-y-2 overflow-y-auto pr-1">
                       {detectedJava.map((java, index) => (
-                        <button
+                        <button data-ui="server-create-dialog-button-10"
                           key={index}
                           type="button"
                           onClick={() => setJavaPath(java.path)}
@@ -840,21 +758,21 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                               : "border-border bg-muted/30 hover:border-primary/50 hover:bg-muted/50"
                           )}
                         >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="font-medium text-foreground text-sm">{java.label}</div>
-                            <span className={cn(
+                          <div data-ui="server-create-dialog-div-71" className="flex items-center justify-between gap-3">
+                            <div data-ui="server-create-dialog-div-72" className="font-medium text-foreground text-sm">{java.label}</div>
+                            <span data-ui="server-create-dialog-span-12" className={cn(
                               "shrink-0 text-xs px-2 py-1 rounded-md font-medium",
                               javaPath === java.path ? "bg-primary/20 text-primary" : "bg-muted/50 text-muted-foreground"
                             )}>
                               {javaPath === java.path ? t("servers.create.selected") : t("servers.create.select")}
                             </span>
                           </div>
-                          <div className="text-xs text-muted-foreground mt-1 truncate">{java.path}</div>
+                          <div data-ui="server-create-dialog-div-73" className="text-xs text-muted-foreground mt-1 truncate">{java.path}</div>
                           {(java.arch || java.vendor || java.fullVersion) && (
-                            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                              {java.arch && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{java.arch}{t("servers.create.bit")}</span>}
-                              {java.vendor && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{java.vendor}</span>}
-                              {java.fullVersion && java.fullVersion !== java.version && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{java.fullVersion}</span>}
+                            <div data-ui="server-create-dialog-div-74" className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                              {java.arch && <span data-ui="server-create-dialog-span-13" className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{java.arch}{t("servers.create.bit")}</span>}
+                              {java.vendor && <span data-ui="server-create-dialog-span-14" className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{java.vendor}</span>}
+                              {java.fullVersion && java.fullVersion !== java.version && <span data-ui="server-create-dialog-span-15" className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">{java.fullVersion}</span>}
                             </div>
                           )}
                         </button>
@@ -863,130 +781,118 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                   </div>
                 ) : null}
 
-                <button
+                <button data-ui="server-create-dialog-button-11"
                   onClick={async () => {
-                    const picked = await window.electronAPI?.pickJavaFile()
+                    const picked = await window.electrobunAPI?.pickJavaFile()
                     if (picked) setJavaPath(picked)
                   }}
                   className="w-full p-3 rounded-xl border border-dashed border-border bg-muted/20 hover:border-accent hover:bg-accent/5 transition-all flex items-center justify-between px-4 text-muted-foreground hover:text-accent"
                 >
-                  <div className="flex items-center gap-2">
+                  <div data-ui="server-create-dialog-div-75" className="flex items-center gap-2">
                     <IconFolderPlus className="w-5 h-5" strokeWidth={1.5} />
-                    <span className="text-sm">{t("servers.create.browseFile")}</span>
+                    <span data-ui="server-create-dialog-span-16" className="text-sm">{t("servers.create.browseFile")}</span>
                   </div>
-                  <span className="text-xs px-2 py-1 rounded-md bg-muted/50 font-medium">{t("servers.create.browse")}</span>
+                  <span data-ui="server-create-dialog-span-17" className="text-xs px-2 py-1 rounded-md bg-muted/50 font-medium">{t("servers.create.browse")}</span>
                 </button>
               </div>
             </div>
           )}
 
           {step === "connect" && (
-            <div className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground mb-1">{t("servers.create.connectTitle")}</h3>
-                <p className="text-xs text-muted-foreground">{t("servers.create.connectDesc")}</p>
-              </div>
+            <div data-ui="server-create-dialog-div-76" className="flex flex-col gap-4 animate-in fade-in-0 slide-in-from-right-2 duration-200">
 
-              <div className="p-4 rounded-xl border border-border bg-gradient-to-br from-primary/5 via-primary/[0.02] to-accent/5">
-                <div className="flex items-start gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <div data-ui="server-create-dialog-div-78" className="p-4 rounded-xl border border-border bg-card/40">
+                <div data-ui="server-create-dialog-div-79" className="flex items-start gap-3 mb-3">
+                  <div data-ui="server-create-dialog-div-80" className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <XnConnectLogo className="w-5 h-5 text-primary" />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-sm font-semibold text-foreground">fetch failed</h4>
+                  <div data-ui="server-create-dialog-div-81">
+                    <div data-ui="server-create-dialog-div-82" className="flex items-center gap-2">
+                      <h4 data-ui="server-create-dialog-h4-1" className="text-sm font-semibold text-foreground">XN Connect</h4>
                       {usage && (
-                        <div
+                        <div data-ui="server-create-dialog-div-83"
                           className={cn(
                             "flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border",
                             usage.used >= usage.max
-                              ? "border-red-500/30 bg-red-500/10 text-red-400"
+                              ? "border-destructive/30 bg-destructive/10 text-destructive"
                               : "border-border bg-muted/50 text-muted-foreground"
                           )}
                           title={t("servers.settings.xnconnect.usageHint")}
                         >
                           <IconGauge className="w-3 h-3" strokeWidth={1.75} />
-                          <span className="font-mono">{usage.used}/{usage.max}</span>
-                          <span>·</span>
-                          <span className="capitalize">{usage.plan}</span>
+                          <span data-ui="server-create-dialog-span-18" className="font-mono">{usage.used}/{usage.max}</span>
+                          <span data-ui="server-create-dialog-span-19">·</span>
+                          <span data-ui="server-create-dialog-span-20" className="capitalize">{usage.plan}</span>
                         </div>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">{t("servers.create.xnConnectDesc")}</p>
+                    <p data-ui="server-create-dialog-p-16" className="text-xs text-muted-foreground mt-0.5">{t("servers.create.xnConnectDesc")}</p>
                   </div>
                 </div>
 
-                <div className="space-y-2.5 text-xs text-muted-foreground">
-                  <div className="flex items-start gap-2">
+                <div data-ui="server-create-dialog-div-84" className="space-y-2.5 text-xs text-muted-foreground">
+                  <div data-ui="server-create-dialog-div-85" className="flex items-start gap-2">
                     <IconRouter className="w-4 h-4 text-primary/60 mt-0.5 flex-shrink-0" strokeWidth={1.5} />
-                    <div>
-                      <span className="font-medium text-foreground">{t("servers.create.xnConnectFeature1")}</span> — {t("servers.create.xnConnectFeature1Desc")}
-                      <span className="font-mono text-primary ml-1">fetch failed</span>
+                    <div data-ui="server-create-dialog-div-86">
+                      <span data-ui="server-create-dialog-span-21" className="font-medium text-foreground">{t("servers.create.xnConnectFeature1")}</span> — {t("servers.create.xnConnectFeature1Desc")}
+                      <span data-ui="server-create-dialog-span-22" className="font-mono text-primary ml-1">connect.xneon.org:PORT</span>
                     </div>
                   </div>
-                  <div className="flex items-start gap-2">
+                  <div data-ui="server-create-dialog-div-87" className="flex items-start gap-2">
                     <IconShield className="w-4 h-4 text-primary/60 mt-0.5 flex-shrink-0" strokeWidth={1.5} />
-                    <div>
-                      <span className="font-medium text-foreground">{t("servers.create.xnConnectFeature2")}</span> — {t("servers.create.xnConnectFeature2Desc")}
+                    <div data-ui="server-create-dialog-div-88">
+                      <span data-ui="server-create-dialog-span-23" className="font-medium text-foreground">{t("servers.create.xnConnectFeature2")}</span> — {t("servers.create.xnConnectFeature2Desc")}
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl border border-border bg-muted/20">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{t("servers.create.enableXnConnect")}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{t("servers.create.enableXnConnectDesc")}</p>
+              <div data-ui="server-create-dialog-div-89" className="p-4 rounded-xl border border-border bg-card/40">
+                <div data-ui="server-create-dialog-div-90" className="flex items-center justify-between">
+                  <div data-ui="server-create-dialog-div-91">
+                    <p data-ui="server-create-dialog-p-17" className="text-sm font-medium text-foreground">{t("servers.create.enableXnConnect")}</p>
+                    <p data-ui="server-create-dialog-p-18" className="text-xs text-muted-foreground mt-0.5">{t("servers.create.enableXnConnectDesc")}</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!relayEnabled && usage && usage.used >= usage.max) {
+                  <SettingsSwitch
+                    label={t("servers.create.xnConnect")}
+                    checked={relayEnabled}
+                    onCheckedChange={enabled => {
+                      if (enabled && usage && usage.used >= usage.max) {
                         setUsageLimitShown(true)
                         return
                       }
                       setUsageLimitShown(false)
-                      setRelayEnabled(!relayEnabled)
+                      setRelayEnabled(enabled)
                     }}
-                    className={cn(
-                      "relative w-11 h-6 rounded-full transition-colors",
-                      relayEnabled ? "bg-primary" : "bg-muted"
-                    )}
-                  >
-                    <div className={cn(
-                      "absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform shadow-sm",
-                      relayEnabled ? "translate-x-5.5" : "translate-x-0.5"
-                    )} />
-                  </button>
+                  />
                 </div>
                 {relayEnabled && (
-                  <div className="mt-3 p-3 rounded-lg bg-primary/5 border border-primary/10">
+                  <div data-ui="server-create-dialog-div-93" className="mt-3 p-3 rounded-lg bg-primary/5 border border-primary/10">
                     {authDone ? (
-                      <p className="text-xs text-green-500 flex items-center gap-1.5">
+                      <p data-ui="server-create-dialog-p-19" className="text-xs text-success flex items-center gap-1.5">
                         <IconCheck className="w-4 h-4" strokeWidth={1.75} />
                         {t("servers.create.authDone")}
                       </p>
                     ) : authing ? (
-                      <div className="space-y-3">
-                        <p className="text-xs text-primary/80 flex items-center gap-1.5">
+                      <div data-ui="server-create-dialog-div-94" className="space-y-3">
+                        <p data-ui="server-create-dialog-p-20" className="text-xs text-primary/80 flex items-center gap-1.5">
                           <IconLoader2 className="w-3.5 h-3.5 animate-spin" />
                           {t("servers.create.authWaiting")}
                         </p>
                         {authUrl && (
-                          <div className="space-y-2">
-                            <code className="block text-xs text-foreground break-all font-mono leading-relaxed">
+                          <div data-ui="server-create-dialog-div-95" className="space-y-2">
+                            <code data-ui="server-create-dialog-code-1" className="block text-xs text-foreground break-all font-mono leading-relaxed">
                               {authUrl}
                             </code>
-                            <div className="flex gap-2">
-                              <button
+                            <div data-ui="server-create-dialog-div-96" className="flex gap-2">
+                              <button data-ui="server-create-dialog-button-13"
                                 onClick={() => navigator.clipboard.writeText(authUrl)}
                                 className="flex-[1] flex items-center justify-center gap-1.5 h-8 rounded-lg border border-border bg-muted/40 text-xs text-muted-foreground hover:text-foreground transition-colors"
                               >
                                 <IconClipboard className="w-3.5 h-3.5" />
                                 {t("servers.create.copy")}
                               </button>
-                              <a
+                              <a data-ui="server-create-dialog-a-1"
                                 href={authUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
@@ -1000,11 +906,11 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                         )}
                       </div>
                     ) : (
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs text-primary/80">
+                      <div data-ui="server-create-dialog-div-97" className="flex items-center justify-between gap-2">
+                        <p data-ui="server-create-dialog-p-21" className="text-xs text-primary/80">
                           {t("servers.create.authRequired")}
                         </p>
-                        <button
+                        <button data-ui="server-create-dialog-button-14"
                           onClick={handleAuthorize}
                           className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
                         >
@@ -1016,28 +922,28 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                   </div>
                 )}
                 {usageLimitShown && (
-                  <div className="mt-3 p-3 rounded-lg border border-red-500/30 bg-red-500/10">
-                    <p className="text-xs font-medium text-red-400">
+                  <div data-ui="server-create-dialog-div-98" className="mt-3 p-3 rounded-lg border border-destructive/30 bg-destructive/10">
+                    <p data-ui="server-create-dialog-p-22" className="text-xs font-medium text-destructive">
                       {t("servers.settings.xnconnect.limitReached", {
                         used: usage?.used ?? 0,
                         max: usage?.max ?? 0,
                       })}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                    <p data-ui="server-create-dialog-p-23" className="text-xs text-muted-foreground mt-1 leading-relaxed">
                       {t("servers.settings.xnconnect.limitReachedDesc")}
                     </p>
-                    <div className="flex gap-2 mt-2.5">
-                      <button
-                        onClick={() => window.electronAPI?.openExternal("https://connect.xneon.org/dashboard")}
+                    <div data-ui="server-create-dialog-div-99" className="flex gap-2 mt-2.5">
+                      <button data-ui="server-create-dialog-button-15"
+                        onClick={() => window.electrobunAPI?.openExternal(`${SERVICE_URLS.connect}/dashboard`)}
                         className="px-3 h-8 rounded-lg border border-border bg-muted/30 text-xs text-foreground hover:bg-muted/60 transition-colors"
                       >
-                        {t("servers.settings.xnconnect.openDashboard")}
+                        <IconExternalLink className="mr-1.5 inline-block size-4" aria-hidden="true" />{t("servers.settings.xnconnect.openDashboard")}
                       </button>
-                      <button
-                        onClick={() => window.electronAPI?.openExternal("https://connect.xneon.org/subscribe")}
+                      <button data-ui="server-create-dialog-button-16"
+                        onClick={() => window.electrobunAPI?.openExternal(`${SERVICE_URLS.connect}/subscribe`)}
                         className="px-3 h-8 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
                       >
-                        {t("servers.settings.xnconnect.subscribe")}
+                        <IconCreditCard className="mr-1.5 inline-block size-4" aria-hidden="true" />{t("servers.settings.xnconnect.subscribe")}
                       </button>
                     </div>
                   </div>
@@ -1047,20 +953,19 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
           )}
         </div>
 
-        <div className="h-px bg-border" />
 
         {/* Navigation */}
-        <div className="flex items-center justify-between px-6 py-4">
-          <button
+        <div data-ui="server-create-dialog-div-101" data-component="server-create-dialog" className="flex items-center justify-end gap-2">
+          <button data-ui="server-create-dialog-button-17"
             onClick={stepIndex === 0 ? () => onOpenChange(false) : handleBack}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors",
+              "flex items-center gap-2 border border-border bg-muted/40 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors",
               stepIndex === 0
                 ? "text-muted-foreground hover:text-foreground hover:bg-muted"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted",
             )}
           >
-            {stepIndex === 0 ? t("servers.cancel") : (
+            {stepIndex === 0 ? <span className="inline-flex items-center justify-center gap-2"><LauncherCancelIcon className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />{t("servers.cancel")}</span> : (
               <>
                 <IconArrowLeft className="w-4 h-4" />
                 {t("servers.create.back")}
@@ -1069,7 +974,7 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
           </button>
 
           {stepIndex < steps.length - 1 ? (
-            <button
+            <button data-ui="server-create-dialog-button-18"
               onClick={handleNext}
               disabled={!canNext()}
               className={cn(
@@ -1085,11 +990,11 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
                   {t("servers.create.analyzing")}
                 </>
               ) : (
-                t("servers.create.next")
+                <><IconArrowRight className="size-4" aria-hidden="true" />{t("servers.create.next")}</>
               )}
             </button>
           ) : (
-            <button
+            <button data-ui="server-create-dialog-button-19"
               onClick={handleCreate}
               disabled={!canNext() || creating}
               className={cn(
@@ -1100,7 +1005,7 @@ export function ServerCreateDialog({ open, onOpenChange, onCreate }: ServerCreat
               )}
             >
               {creating ? (
-                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                <div data-ui="server-create-dialog-div-102" className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
               ) : (
                 <IconPlayerPlay className="w-4 h-4" />
               )}

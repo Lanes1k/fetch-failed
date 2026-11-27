@@ -34,6 +34,7 @@ export class XnlcVersionService {
     private assetsManager: AssetsManager,
     private gameDir: string,
     private osInfo: OSInfo,
+    private instanceDir = gameDir,
   ) {}
 
   // ---------- Version Discovery ----------
@@ -83,7 +84,7 @@ export class XnlcVersionService {
     await this.librariesManager.downloadLibraries(versionJson, withStage("libraries", tracker.onProgress));
 
     // Download assets
-    await this.assetsManager.downloadAssets(versionJson, this.gameDir, withStage("assets", tracker.onProgress));
+    await this.assetsManager.downloadAssets(versionJson, this.gameDir, withStage("assets", tracker.onProgress), this.instanceDir);
 
     return versionJson;
   }
@@ -138,10 +139,9 @@ export class XnlcVersionService {
     ensureDirSync(versionDir);
 
     const clientDest = path.join(versionDir, `${versionId}.jar`);
-    if (fs.existsSync(clientDest)) {
-      return;
-    }
-
+    // Явный собственный JAR наследуемой версии (например результат OptiFine
+    // Patcher) не должен проверяться по размеру и хэшу ванильного downloads.client.
+    if (versionJson.jar && versionJson.inheritsFrom && versionJson.jar !== versionJson.inheritsFrom && fs.existsSync(clientDest)) return;
     await this.downloader.download({
       url: clientDownload.url,
       dest: clientDest,
@@ -160,6 +160,8 @@ export class XnlcVersionService {
     const baseClientJarPath = path.join(baseVersionDir, `${mcVersion}.jar`);
 
     if (fs.existsSync(baseVersionJsonPath) && fs.existsSync(baseClientJarPath)) {
+      const normalized = await this.versionResolver.resolveVersion(mcVersion, this.osInfo);
+      fs.writeFileSync(baseVersionJsonPath, JSON.stringify(normalized, null, 2));
       return;
     }
 

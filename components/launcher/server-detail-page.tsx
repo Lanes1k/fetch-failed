@@ -1,11 +1,8 @@
+import { CONTENT_ENTER_DELAYED } from "./content-motion"
+import { SERVICE_URLS } from "@xnlc/urls"
 import { useState, useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
-import {
-  IconArrowLeft, IconTerminal, IconSettings, IconPlayerPlay,
-  IconPlayerStop, IconFolder, IconPuzzle, IconAdjustments, IconUsers,
-  IconRefresh, IconDownload, IconCpu, IconDatabase, IconClock,
-  IconNetwork, IconCopy, IconCheck, IconCamera, IconTrash,
-} from "@tabler/icons-react"
+import { IconArrowLeft, IconTerminal2, IconSettings, IconPlayerPlay, IconPlayerStop, IconFolder, IconPuzzle, IconAdjustments, IconUsers, IconRefresh, IconDownload, IconCpu, IconDatabase, IconArchive, IconClock, IconNetwork, IconWorld, IconLink, IconCheck, IconCamera, IconTrash, IconLoader2, IconShare, IconWifiOff } from "@tabler/icons-react"
 import { useMcServerState, useMcServerLogs, useMcServerMetrics, useMcServerDownloadProgress } from "@/src/hooks/use-mc-servers"
 import { cn } from "@/lib/utils"
 import { IconPickerModal } from "@/components/launcher/instance/icon-picker-modal"
@@ -19,12 +16,15 @@ import { PropertiesTab } from "./server/properties-tab"
 import { FilesTab } from "./server/files-tab"
 import { AddonsTab } from "./server/addons-tab"
 import { ServerEulaModal } from "./server-eula-modal"
+import { RemoteAccessDialog } from "./server/remote-access-dialog"
+import { remoteServerError } from "./server/remote-error"
 
-type ServerTab = "console" | "addons" | "properties" | "players" | "settings" | "files"
+type ServerTab = "console" | "datapacks" | "addons" | "properties" | "players" | "settings" | "files"
 
 const ALL_TABS: Array<{ id: ServerTab; labelKey: string; icon: React.ElementType; label?: string }> = [
-  { id: "console", labelKey: "servers.tabConsole", icon: IconTerminal },
+  { id: "console", labelKey: "servers.tabConsole", icon: IconTerminal2 },
   { id: "files", labelKey: "servers.tabFiles", icon: IconFolder },
+  { id: "datapacks", labelKey: "servers.datapacks.title", icon: IconArchive },
   { id: "addons", labelKey: "servers.tabAddons", icon: IconPuzzle },
   { id: "properties", labelKey: "servers.tabProperties", icon: IconAdjustments },
   { id: "players", labelKey: "servers.tabPlayers", icon: IconUsers },
@@ -63,6 +63,29 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null)
   const [eulaAccepted, setEulaAccepted] = useState(true)
   const [showEula, setShowEula] = useState(false)
+  const [showAccess, setShowAccess] = useState(false)
+  const [accessEnabled, setAccessEnabled] = useState(!!server.remote)
+  useEffect(() => {
+    let active = true
+    setAccessEnabled(!!server.remote)
+    window.electrobunAPI?.mcServerRemote({ action: "access", serverId: server.id }).then(result => {
+      if (active) setAccessEnabled(!!result.access)
+    }).catch(() => {})
+    return () => { active = false }
+  }, [server.id, server.remote])
+
+  const [remoteOnline, setRemoteOnline] = useState(server.remote?.online ?? false)
+  const [remotePermissions, setRemotePermissions] = useState(server.remote?.permissions)
+  const [remoteError, setRemoteError] = useState("")
+  useEffect(() => {
+    if (!server.remote) return
+    return window.electrobunAPI?.onMcServerRemoteConnection(event => {
+      if (event.id !== server.id) return
+      setRemoteOnline(event.online); setRemotePermissions(event.info.remote?.permissions)
+      onServerUpdated?.(event.info)
+    })
+  }, [server.id, onServerUpdated])
+  const allowed = (permission: keyof NonNullable<McServerInfo["remote"]>["permissions"]) => !server.remote || remotePermissions?.[permission] === true
   const [icon, setIcon] = useState(server.icon ?? "")
   const [showIconPicker, setShowIconPicker] = useState(false)
   const [limitState, setLimitState] = useState<{ used: number; max: number } | null>(null)
@@ -71,12 +94,12 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
   const propertiesFlushRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
-    window.electronAPI?.mcServerGetAddresses(server.id).then(addrs => {
+    window.electrobunAPI?.mcServerGetAddresses(server.id).then(addrs => {
       if (addrs) setAddresses(addrs)
-    })
-    window.electronAPI?.mcServerCheckEula(server.id).then(accepted => {
+    }).catch(() => {})
+    window.electrobunAPI?.mcServerCheckEula(server.id).then(accepted => {
       setEulaAccepted(accepted)
-    })
+    }).catch(() => {})
 
     // XN Connect не запускается отсюда: туннель поднимается вместе с самим
     // сервером (mc-server:start) и гасится вместе с ним (mc-server:stop/kill).
@@ -84,9 +107,9 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
     // остановлен, — relay стучался в закрытый порт и мигал реконнектами.
 
     // Re-fetch addresses when relay state changes
-    const unsubXn = window.electronAPI?.onXnConnectState((data) => {
+    const unsubXn = window.electrobunAPI?.onXnConnectState((data) => {
       if (data.serverId === server.id) {
-        window.electronAPI?.mcServerGetAddresses(server.id).then(addrs => {
+        window.electrobunAPI?.mcServerGetAddresses(server.id).then(addrs => {
           if (addrs) setAddresses(addrs)
         })
         if (data.state.status === "limit_reached") {
@@ -106,7 +129,7 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
   }
 
   const handleEulaAccept = async () => {
-    await window.electronAPI?.mcServerAcceptEula(server.id)
+    await window.electrobunAPI?.mcServerAcceptEula(server.id)
     setEulaAccepted(true)
     setShowEula(false)
     if (!isBusy) {
@@ -121,7 +144,7 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
 
   const handleIconChange = async (newIcon: string) => {
     setIcon(newIcon)
-    await window.electronAPI?.mcServerUpdate(server.id, { icon: newIcon || null })
+    await window.electrobunAPI?.mcServerUpdate(server.id, { icon: newIcon || null })
   }
 
   const isRunning = state.status === "running"
@@ -148,7 +171,10 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
     pendingRef.current = kind
     setPending(kind)
     try {
+      setRemoteError("")
       await fn()
+    } catch (error) {
+      setRemoteError(server.remote ? remoteServerError(error, t) : (error as Error).message)
     } finally {
       // Если запросили противоположное действие, маркер уже перезаписан.
       if (pendingRef.current === kind) {
@@ -161,10 +187,10 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
   const handleSendCommand = async () => {
     if (!command.trim()) return
     try {
-      await window.electronAPI?.mcServerSendCommand(server.id, command.trim())
+      await window.electrobunAPI?.mcServerSendCommand(server.id, command.trim())
       setCommand("")
-    } catch {
-      // Причина отказа уже выведена в консоль сервера.
+    } catch (error) {
+      if (server.remote) setRemoteError(remoteServerError(error, t))
     }
   }
 
@@ -196,24 +222,30 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
   const loaderName = loaderLabel(server.modloader)
 
   const tabs = ALL_TABS
+    .filter(tab => tab.id === "files" ? allowed("readFiles") : (tab.id === "addons" || tab.id === "datapacks") ? allowed("readFiles") && allowed("writeFiles") : tab.id === "players" ? allowed("players") : tab.id === "settings" ? allowed("settings") : true)
     .filter(tab => tab.id !== "addons" || hasAddons(server.modloader))
+    .filter(tab => tab.id !== "datapacks" || !["bungeecord", "velocity", "waterfall"].includes(server.modloader))
     .map(tab =>
       tab.id === "addons"
         ? { ...tab, labelKey: getAddonsLabelKey(server.modloader) }
         : tab
     )
+  useEffect(() => { if (!tabs.some(tab => tab.id === activeTab)) setActiveTab("console") }, [activeTab, remotePermissions])
+
+  const remoteOffline = !!server.remote && !remoteOnline
 
   return (
-    <div className="flex flex-col h-full animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+    <div data-ui="server-detail-page-div-1" data-component="server-detail-page" id="server-detail-page" data-tab={activeTab} data-status={state.status} className="flex flex-col h-full">
       <ServerEulaModal
         open={showEula}
         onAccept={handleEulaAccept}
         onDecline={handleEulaDecline}
       />
+      <RemoteAccessDialog open={showAccess} onClose={() => setShowAccess(false)} onAccessChange={setAccessEnabled} server={server} />
       {/* Header */}
-      <div className="flex items-start gap-4 pb-4 border-b border-border">
+      <div data-ui="server-detail-page-div-2" className={`launcher-page-header mb-5 flex flex-wrap items-start gap-4 ${CONTENT_ENTER_DELAYED}`}>
         {/* Back button */}
-        <button
+        <button data-ui="server-detail-page-button-1"
           onClick={onBack}
           className="mt-1 p-2 rounded-xl bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
         >
@@ -221,7 +253,8 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
         </button>
 
         {/* Server icon */}
-        <button
+        <button data-ui="server-detail-page-button-2"
+          disabled={remoteOffline || !allowed("settings")}
           onClick={() => setShowIconPicker(true)}
           className="relative w-16 h-16 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0 border border-border bg-muted/70 hover:border-primary/50 transition-colors cursor-pointer group"
         >
@@ -230,7 +263,7 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
           ) : (
             <>
               <LoaderIcon loaderId={server.modloader} className="w-10 h-10 text-primary/60" />
-              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+              <div data-ui="server-detail-page-div-3" className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                 <IconCamera className="w-5 h-5 text-white" />
               </div>
             </>
@@ -239,91 +272,108 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
         <IconPickerModal open={showIconPicker} onOpenChange={setShowIconPicker} value={icon} onChange={handleIconChange} />
 
         {/* Info */}
-        <div className="flex-1 min-w-0">
-          <h1 className="m-0 text-lg font-bold text-foreground truncate">{server.name}</h1>
-          <div className="flex items-center gap-3 mt-1.5">
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-muted/60 text-xs text-muted-foreground">
+        <div data-ui="server-detail-page-div-4" className="min-w-0 flex-1 basis-40">
+          <h1 data-ui="server-detail-page-h1-1" className="m-0 text-lg font-bold text-foreground truncate">{server.name}</h1>
+          <div data-ui="server-detail-page-div-5" className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <span data-ui="server-detail-page-span-1" className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-muted/60 text-xs text-muted-foreground">
               <LoaderIcon loaderId={server.modloader} className="w-3 h-3 flex-shrink-0" />
               {loaderName} {server.gameVersion}
             </span>
             {/* Status badge */}
-            <div className={cn(
+            <div data-ui="server-detail-page-div-6" className={cn(
               "flex items-center gap-1.5 rounded-full px-3 py-0.5 text-xs font-medium",
-              isRunning && "bg-green-500/15 text-green-400 border border-green-500/20",
-              isStartingLike && "bg-yellow-500/15 text-yellow-400 border border-yellow-500/20",
+              isRunning && "bg-success/15 text-success border border-success/20",
+              isStartingLike && "bg-warning/15 text-warning border border-warning/20",
               isInstallLike && "bg-primary/15 text-primary border border-primary/25",
-              isStoppingLike && "bg-orange-500/15 text-orange-400 border border-orange-500/20",
+              isStoppingLike && "bg-primary/15 text-primary border border-primary/20",
               !isRunning && !isBusy && "bg-muted/60 text-muted-foreground border border-border",
             )}>
-              <div className={cn(
+              <div data-ui="server-detail-page-div-7" className={cn(
                 "h-2 w-2 rounded-full",
-                isRunning && "bg-green-400",
-                isStartingLike && "bg-yellow-400 animate-pulse",
+                isRunning && "bg-success",
+                isStartingLike && "bg-warning animate-pulse",
                 isInstallLike && "bg-primary animate-pulse",
-                isStoppingLike && "bg-orange-400",
+                isStoppingLike && "bg-primary",
                 !isRunning && !isBusy && "bg-muted-foreground/50",
               )} />
-              {isRunning && t("servers.statusRunning")}
-              {isStartingLike && t("servers.statusStarting")}
-              {isInstallLike && t("servers.statusInstalling")}
-              {isStoppingLike && t("servers.statusStopping")}
-              {!isRunning && !isBusy && t("servers.statusStopped")}
+              {!remoteOffline && isRunning && t("servers.statusRunning")}
+              {!remoteOffline && isStartingLike && t("servers.statusStarting")}
+              {!remoteOffline && isInstallLike && t("servers.statusInstalling")}
+              {!remoteOffline && isStoppingLike && t("servers.statusStopping")}
+              {remoteOffline ? t("remoteServer.offline") : !isRunning && !isBusy && t("servers.statusStopped")}
             </div>
-            {isRunning && (
+            {isRunning && !remoteOffline && (
               <>
-                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                  <IconCpu className="w-3 h-3 text-green-400" />
-                  <span className="font-mono font-bold text-foreground">{metrics.cpuPercent}%</span>
+                <span data-ui="server-detail-page-span-2" className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <IconCpu className="w-3 h-3 text-success" />
+                  <span data-ui="server-detail-page-span-3" className="font-mono font-bold text-foreground">{metrics.cpuPercent}%</span>
                 </span>
-                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                <span data-ui="server-detail-page-span-4" className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
                   <IconDatabase className="w-3 h-3 text-primary" />
-                  <span className="font-mono font-bold text-foreground">{metrics.memoryMb} <span className="text-foreground">fetch failed</span></span>
+                  <span data-ui="server-detail-page-span-5" className="font-mono font-bold text-foreground">{metrics.memoryMb} <span data-ui="server-detail-page-span-6" className="text-foreground">MB</span></span>
                 </span>
-                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                <span data-ui="server-detail-page-span-7" className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
                   <IconClock className="w-3 h-3 text-accent" />
-                  <span className="font-mono font-bold text-foreground">{formatUptime(metrics.uptimeSeconds)}</span>
+                  <span data-ui="server-detail-page-span-8" className="font-mono font-bold text-foreground">{formatUptime(metrics.uptimeSeconds)}</span>
                 </span>
               </>
             )}
           </div>
+      {/* Адреса подключения внутри шапки сервера. */}
+      {addresses && !remoteOffline && (
+        <div data-ui="server-detail-page-div-11" className="mt-2 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
+          <AddressChip icon={IconNetwork} label={t("servers.address.local")} value={addresses.local} copied={copiedAddr === addresses.local} onCopy={handleCopyAddr} />
+          {addresses.public && (
+            <AddressChip icon={IconWorld} label={t("servers.address.public")} value={addresses.public} copied={copiedAddr === addresses.public} onCopy={handleCopyAddr} />
+          )}
+          {addresses.custom ? (
+            // Чип показываем только когда адрес XN Connect реально есть: если
+            // функция выключена у сервера, никакого «XNEON» в шапке быть не должно.
+            <AddressChip icon={IconLink} label="XN Connect" value={addresses.custom} copied={copiedAddr === addresses.custom} onCopy={handleCopyAddr} />
+          ) : null}
+        </div>
+      )}
+
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <button
-            onClick={() => window.electronAPI?.mcServerOpenFolder(server.id)}
+        <div data-ui="server-detail-page-div-8" className="flex items-center gap-2 flex-shrink-0 [&_button:disabled]:cursor-not-allowed [&_button:disabled]:opacity-40">
+          <button type="button" disabled={remoteOffline} onClick={() => setShowAccess(true)} className="flex items-center gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"><IconShare className="h-4 w-4 text-primary" />{t(accessEnabled ? "share.manage" : "share.launcher.share")}</button>
+          <button data-ui="server-detail-page-button-3"
+            disabled={remoteOffline || (!!server.remote && !allowed("readFiles"))}
+            onClick={() => server.remote ? setActiveTab("files") : window.electrobunAPI?.mcServerOpenFolder(server.id)}
             className="p-2 rounded-xl bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             title={t("servers.openFolder")}
           >
             <IconFolder className="w-5 h-5" />
           </button>
-          <button
+          <button data-ui="server-detail-page-button-4"
             onClick={handleRestart}
-            disabled={!isRunning || isBusy}
+            disabled={!isRunning || isBusy || !allowed("start") || !allowed("stop") || !!server.remote && !remoteOnline}
             className={cn(
               "p-2 rounded-xl transition-all active:scale-[0.98]",
               isRunning && !isBusy
-                ? "bg-orange-500/15 hover:bg-orange-500/25 text-orange-400 border border-orange-500/30"
+                ? "bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30"
                 : "bg-muted/30 text-muted-foreground/40 border border-border cursor-not-allowed active:scale-100"
             )}
             title={t("servers.restart")}
           >
             <IconRefresh className="w-4 h-4" />
           </button>
-          <button
+          <button data-ui="server-detail-page-button-5"
             onClick={handleStartStop}
-            disabled={isStoppingLike}
+            disabled={isStoppingLike || !allowed(isRunning || isStartingLike || isInstallLike ? "stop" : "start") || !!server.remote && !remoteOnline}
             className={cn(
               "p-2 rounded-xl transition-all active:scale-[0.98]",
               isRunning || isStartingLike || isInstallLike
-                ? "bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20"
+                ? "bg-destructive hover:bg-destructive text-destructive-foreground shadow-lg shadow-destructive/20"
                 : "bg-primary hover:bg-primary/90 text-primary-foreground shadow-[0_0_15px_var(--glow-primary)]",
               isStoppingLike && "opacity-50 cursor-not-allowed active:scale-100"
             )}
             title={isRunning || isStartingLike || isInstallLike ? t("servers.stop") : t("servers.start")}
           >
             {isStoppingLike ? (
-              <IconRefresh className="w-4 h-4 animate-spin" />
+              <IconLoader2 className="w-4 h-4 animate-spin" />
             ) : isRunning || isStartingLike || isInstallLike ? (
               <IconPlayerStop className="w-4 h-4" />
             ) : (
@@ -333,21 +383,30 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
         </div>
       </div>
 
+      {remoteOffline ? (
+        <div role="status" className="flex flex-1 flex-col items-center justify-center rounded-2xl border border-border bg-card px-6 py-10 text-center">
+          <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-3xl border border-primary/20 bg-primary/10 text-primary">
+            <IconWifiOff className="h-10 w-10" strokeWidth={1.75} aria-hidden="true" />
+          </div>
+          <h2 className="text-lg font-semibold text-foreground">{t("remoteServer.offline")}</h2>
+          <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">{t("remoteServer.error.offline")}</p>
+        </div>
+      ) : <>
       {/* XN Connect tunnel limit warning */}
       {limitState && (
-        <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border bg-red-500/10">
-          <span className="text-xs text-red-400 min-w-0">
+        <div data-ui="server-detail-page-div-9" className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border bg-destructive/10">
+          <span data-ui="server-detail-page-span-9" className="text-xs text-destructive min-w-0">
             {t("servers.settings.xnconnect.limitReached", { used: limitState.used, max: limitState.max })}
           </span>
-          <div className="flex gap-2 flex-shrink-0">
-            <button
-              onClick={() => window.electronAPI?.openExternal("https://connect.xneon.org/dashboard")}
+          <div data-ui="server-detail-page-div-10" className="flex gap-2 flex-shrink-0">
+            <button data-ui="server-detail-page-button-6"
+              onClick={() => window.electrobunAPI?.openExternal(`${SERVICE_URLS.connect}/dashboard`)}
               className="px-2.5 h-7 rounded-lg border border-border bg-muted/30 text-xs text-foreground hover:bg-muted/60 transition-colors"
             >
               {t("servers.settings.xnconnect.openDashboard")}
             </button>
-            <button
-              onClick={() => window.electronAPI?.openExternal("https://connect.xneon.org/subscribe")}
+            <button data-ui="server-detail-page-button-7"
+              onClick={() => window.electrobunAPI?.openExternal(`${SERVICE_URLS.connect}/subscribe`)}
               className="px-2.5 h-7 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
             >
               {t("servers.settings.xnconnect.subscribe")}
@@ -356,37 +415,22 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
         </div>
       )}
 
-      {/* Addresses */}
-      {addresses && (
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-muted/10">
-          <IconNetwork className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-          <AddressChip label="fetch failed" value={addresses.local} copied={copiedAddr === addresses.local} onCopy={handleCopyAddr} />
-          {addresses.public && (
-            <AddressChip label="fetch failed" value={addresses.public} copied={copiedAddr === addresses.public} onCopy={handleCopyAddr} />
-          )}
-          {addresses.custom ? (
-            // Чип показываем только когда адрес XN Connect реально есть: если
-            // функция выключена у сервера, никакого «XNEON» в шапке быть не должно.
-            <AddressChip label="fetch failed" value={addresses.custom} copied={copiedAddr === addresses.custom} onCopy={handleCopyAddr} />
-          ) : null}
-        </div>
-      )}
-
       {/* Download progress */}
+      {remoteError && <p role="alert" className="mx-3 mt-3 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive">{remoteError}</p>}
       {downloadProgress && downloadProgress.phase !== "done" && (
-        <div className="mx-3 my-3 rounded-2xl border border-border bg-primary/5 px-4 py-3">
-          <div className="flex items-center gap-3">
+        <div data-ui="server-detail-page-div-12" className="mx-3 my-3 rounded-2xl border border-border bg-primary/5 px-4 py-3">
+          <div data-ui="server-detail-page-div-13" className="flex items-center gap-3">
             <IconDownload className="w-4 h-4 text-primary flex-shrink-0" />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-medium text-foreground truncate">{downloadProgress.message}</span>
+            <div data-ui="server-detail-page-div-14" className="flex-1 min-w-0">
+              <div data-ui="server-detail-page-div-15" className="flex items-center justify-between mb-1.5">
+                <span data-ui="server-detail-page-span-10" className="text-xs font-medium text-foreground truncate">{downloadProgress.message}</span>
                 {downloadProgress.percent != null && (
-                  <span className="text-xs font-mono text-primary ml-2">{downloadProgress.percent}%</span>
+                  <span data-ui="server-detail-page-span-11" className="text-xs font-mono text-primary ml-2">{downloadProgress.percent}%</span>
                 )}
               </div>
               {downloadProgress.percent != null && (
-                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div
+                <div data-ui="server-detail-page-div-16" className="h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div data-ui="server-detail-page-div-17"
                     className="h-full rounded-full bg-primary transition-all duration-300"
                     style={{ width: `${downloadProgress.percent}%` }}
                   />
@@ -398,10 +442,12 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
       )}
 
       {/* Tabs */}
-      <div className="flex gap-0.5 p-1 mt-4 rounded-xl bg-muted/30 border border-border/50 mx-auto w-fit">
+      <div data-ui="server-detail-page-div-18" className="flex gap-0.5 p-1 mt-4 rounded-xl bg-muted/30 border border-border/50 mx-auto w-fit">
         {tabs.map(tab => (
-          <button
+          <button data-ui="server-detail-page-button-8"
             key={tab.id}
+              data-tab={tab.id}
+              data-active={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
               "flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-200",
@@ -417,12 +463,14 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 min-h-0 flex flex-col mt-3">
+      <div data-ui="server-detail-page-div-19" className="flex-1 min-h-0 flex flex-col mt-3">
         {activeTab === "console" && (
           <ConsoleTab
             serverId={server.id}
+            serverName={server.name}
             logs={logs}
             isRunning={isRunning}
+            canCommand={allowed("console") && (!server.remote || remoteOnline)}
             command={command}
             onCommandChange={setCommand}
             onSendCommand={handleSendCommand}
@@ -430,21 +478,23 @@ export function ServerDetailPage({ server, onBack, onServerUpdated }: ServerDeta
           />
         )}
         {activeTab === "settings" && (
-          <SettingsTab server={server} onServerUpdated={onServerUpdated} />
+          <SettingsTab key={server.id} server={server} onServerUpdated={onServerUpdated} />
         )}
         {activeTab === "players" && (
           <PlayersTab serverId={server.id} />
         )}
         {activeTab === "properties" && (
-          <PropertiesTab server={server} flushRef={propertiesFlushRef} onServerUpdated={onServerUpdated} />
+          <fieldset disabled={!allowed("properties")} className="contents"><PropertiesTab server={server} flushRef={propertiesFlushRef} onServerUpdated={onServerUpdated} /></fieldset>
         )}
         {activeTab === "files" && (
-          <FilesTab serverId={server.id} />
+          <FilesTab serverId={server.id} canWrite={allowed("writeFiles")} canWriteProperties={allowed("properties")} />
         )}
+        {activeTab === "datapacks" && <AddonsTab key={`datapacks:${server.id}`} server={server} datapacks canReload={allowed("console") && state.status === "running"} />}
         {activeTab === "addons" && (
           <AddonsTab server={server} />
         )}
       </div>
+      </>}
     </div>
   )
 }
@@ -458,21 +508,21 @@ function formatUptime(seconds: number): string {
   return `${s}s`
 }
 
-function AddressChip({ label, value, copied, onCopy }: { label: string; value: string; copied: boolean; onCopy: (addr: string) => void }) {
+function AddressChip({ icon: Icon, label, value, copied, onCopy }: { icon: React.ElementType; label: string; value: string; copied: boolean; onCopy: (addr: string) => void }) {
   const { t } = useTranslation()
   return (
-    <button
+    <button data-ui="server-detail-page-button-9" data-component="address-chip"
       onClick={() => onCopy(value)}
-      className="group flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/50 hover:bg-muted border border-border/50 transition-colors cursor-pointer"
+      type="button"
+      className="group inline-flex h-5 min-w-0 max-w-full items-center gap-1.5 rounded-sm bg-transparent text-left text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       title={`${label}: ${value} — ${t("servers.clickToCopy")}`}
     >
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className="text-[11px] font-mono text-foreground/80">{value}</span>
-      {copied ? (
-        <IconCheck className="w-3 h-3 text-green-400" />
-      ) : (
-        <IconCopy className="w-3 h-3 text-muted-foreground/0 group-hover:text-muted-foreground transition-colors" />
-      )}
+      {copied ? <IconCheck className="h-3 w-3 shrink-0 text-primary" aria-hidden="true" /> : <Icon className="h-3 w-3 shrink-0 text-primary" strokeWidth={1.6} aria-hidden="true" />}
+      <span className="min-w-0">
+      <span data-ui="server-detail-page-span-12" className="sr-only">{label}: </span>
+      <span data-ui="server-detail-page-span-13" className="block truncate font-mono text-[11px] font-normal leading-5">{value}</span>
+      </span>
+
     </button>
   )
 }

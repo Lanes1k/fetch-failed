@@ -5,13 +5,17 @@
 
 export type MinecraftLaunchParams = {
   version: string
-  modLoader: "vanilla" | "forge" | "fabric" | "quilt" | "liteloader" | "optifine" | "neoforge"
+  modLoader: "vanilla" | "forge" | "fabric" | "quilt" | "liteloader" | "optifine" | "neoforge" | "custom"
   loaderVersion?: string
+  /** Папка профиля внутри versions или абсолютный путь к нему. */
+  customVersionPath?: string
   account: {
     type: string
     username: string
     uuid?: string
-    accessToken?: string
+    id?: string
+    /** Authlib-Injector: id authorization server (для разрешения в serverUrl при запуске) */
+    serverId?: string
   }
   memory: { min: string; max: string }
   javaPath?: string
@@ -44,6 +48,7 @@ export type MinecraftLaunchParams = {
 }
 
 export type MinecraftProgress = {
+  removedLoaders?: string[]
   type?: string
   installationPhase?: string
   task?: number
@@ -90,6 +95,7 @@ export type LaunchRequestOptions = {
   modLoader?: string
   loaderType?: string
   loaderVersion?: string
+  customVersionPath?: string
   memoryMin?: string
   memoryMax?: string
   javaPath?: string
@@ -101,6 +107,7 @@ export type ResolvedLaunchRequest = {
   mcVersion: string
   loaderType: string
   loaderVersion?: string
+  customVersionPath?: string
   memoryMin: string
   memoryMax: string
   javaPath?: string

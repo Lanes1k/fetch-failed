@@ -6,7 +6,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     // Текстуры плащей (textures.minecraft.net) отдаются напрямую с
     // разрешённым CORS, поэтому внешний CORS-прокси не нужен — раньше он
     // только добавлял лишний сетевой хоп и тормозил загрузку превью.
-    img.onerror = () => reject(new Error(`fetch failed${url}`))
+    img.onerror = () => reject(new Error(`Failed to load: ${url}`))
     img.src = url
   })
 }

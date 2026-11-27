@@ -1,89 +1,32 @@
-import { IconLoader2 } from "@tabler/icons-react"
-import type { ImportProgressState } from "./use-import"
+import { IconX as LauncherCancelIcon } from "@tabler/icons-react"
 import { useTranslation } from "react-i18next"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { cn } from "@/lib/utils"
+import type { ImportProgress } from "@xnlc/types"
+import { ImportProgressPanel } from "./import-progress-panel"
 
 interface InstanceImportOverlayProps {
-  importProgress: ImportProgressState | null
+  importProgress: ImportProgress | null
   importError: string | null
   isCancelling: boolean
   onCancel: () => void
+  canCancel?: boolean
+  onRetry?: () => void
 }
 
-function formatProgressLabel(t: (key: string) => string, message: string, source: ImportProgressState["source"]): string {
-  const trimmed = message.trim()
-  const isCurseforge = source === "curseforge"
-  const isFtb = source === "ftb"
-  if (!trimmed) {
-    return isCurseforge || isFtb ? t("import.loadingModpack") : t("import.loadingFiles")
-  }
-
-  if (/^\d+\s*\/\s*\d+/.test(trimmed)) {
-    return isCurseforge || isFtb ? t("import.loadingModpack") : t("import.loadingFiles")
-  }
-
-  return trimmed
-}
-
-export function InstanceImportOverlay({
-  importProgress,
-  importError,
-  isCancelling,
-  onCancel,
-}: InstanceImportOverlayProps) {
+export function InstanceImportOverlay({ importProgress, importError, isCancelling, onCancel, canCancel = true, onRetry }: InstanceImportOverlayProps) {
   const { t } = useTranslation()
   if (!importProgress) return null
-
-  const total = Math.max(importProgress.total, 1)
-  const progressPercent = Math.max(0, Math.min(100, Math.round((importProgress.current / total) * 100)))
-  const progressLabel = formatProgressLabel(t, importProgress.message, importProgress.source)
-
-  return (
-    // Фон затемняем как в обычных диалогах приложения (`bg-black/50`): прежний
-    // `bg-background/78` на тёмной теме давал почти чёрный экран, и было похоже,
-    // будто интерфейс пропал.
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-2xl">
-        <div className="border-b border-border px-5 py-4">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">{t("import.modpackImport")}</p>
-          <h3 className="mt-1 text-lg font-semibold text-foreground">{t("import.loadingBuild")}</h3>
-        </div>
-
-        <div className="space-y-4 px-5 py-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary">
-              <IconLoader2 className="h-5 w-5 animate-spin" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-foreground">{progressLabel}</p>
-            </div>
-            <span className="shrink-0 text-sm font-semibold text-foreground">{progressPercent}%</span>
-          </div>
-
-          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-300"
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
-
-          {importError && (
-            <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-              {importError}
-            </div>
-          )}
-
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={isCancelling}
-              className="rounded-xl border border-border bg-muted/40 px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isCancelling ? t("import.cancelling") : t("import.cancel")}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
+  return <Dialog open>
+    <DialogContent showCloseButton={false} aria-describedby={undefined} onInteractOutside={event => event.preventDefault()} onEscapeKeyDown={event => event.preventDefault()} data-component="instance-import-overlay" className="flex max-h-[calc(100dvh-5rem)] max-w-md flex-col gap-0 overflow-hidden rounded-2xl border-border bg-card p-0 shadow-2xl">
+      <DialogTitle className="sr-only">{t("import.loadingBuild")}</DialogTitle>
+      <div className="min-h-0 overflow-y-auto p-5"><ImportProgressPanel progress={importProgress} error={importError} cancelling={isCancelling} /></div>
+      {(canCancel || importError || importProgress.phase === "complete") && <div className="flex shrink-0 justify-end gap-2 border-t border-border px-5 py-3.5">
+        {importError && onRetry && <button type="button" onClick={onRetry} className="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t("common.retry")}</button>}
+        <button data-ui="instance-instance-import-overlay-button-1" type="button" onClick={onCancel} disabled={isCancelling} className={cn("rounded-xl border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60", importProgress.phase === "complete" && !importError ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "border-border bg-muted/40 text-foreground hover:bg-muted")}>
+          {importError ? t("import.close") : isCancelling ? t("import.cancelling") : importProgress.phase === "complete" ? t("import.done") : <span className="inline-flex items-center justify-center gap-2"><LauncherCancelIcon className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />{t("import.cancel")}</span>}
+        </button>
+      </div>}
+    </DialogContent>
+  </Dialog>
 }

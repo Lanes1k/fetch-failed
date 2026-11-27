@@ -32,7 +32,39 @@ export function SkinViewer3D({ skinUrl, capeUrl, slim, backEquipment = "cape", f
     const viewer = new SkinViewer({ canvas: canvasRef.current, width, height })
     viewer.animation = new IdleAnimation()
     viewerRef.current = viewer
-    return () => { viewer.dispose(); viewerRef.current = null }
+    const defaults = { zoom: viewer.zoom, fov: viewer.fov, global: viewer.globalLight.intensity, camera: viewer.cameraLight.intensity }
+    const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)")
+    // CSS управляет параметрами сцены через явный мост, без доступа к объектам WebGL.
+    const applyAppearance = () => {
+      if (!canvasRef.current) return
+      const styles = getComputedStyle(canvasRef.current)
+      const number = (key: string, fallback: number, min: number, max: number) => {
+        const raw = styles.getPropertyValue(key).trim(), value = Number(raw)
+        return raw && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback
+      }
+      viewer.zoom = number("--skin-zoom", defaults.zoom, 0.2, 3)
+      viewer.fov = number("--skin-fov", defaults.fov, 20, 110)
+      viewer.globalLight.intensity = number("--skin-global-light", defaults.global, 0, 3)
+      viewer.cameraLight.intensity = number("--skin-camera-light", defaults.camera, 0, 3)
+      if (viewer.animation) viewer.animation.speed = reducedMotion.matches ? 0 : number("--skin-animation-speed", 1, 0, 3)
+    }
+    applyAppearance()
+    window.addEventListener("theme:applied", applyAppearance)
+    window.addEventListener("resize", applyAppearance)
+    reducedMotion.addEventListener("change", applyAppearance)
+    return () => {
+      window.removeEventListener("theme:applied", applyAppearance)
+      window.removeEventListener("resize", applyAppearance)
+      reducedMotion.removeEventListener("change", applyAppearance)
+      viewer.dispose(); viewerRef.current = null
+    }
+  }, [])
+
+  // Resize the existing renderer instead of disposing and recreating it.
+  // Recreating on every window resize cleared the model, while the skin-load
+  // effect did not rerun because skinUrl and slim had not changed.
+  useEffect(() => {
+    viewerRef.current?.setSize(width, height)
   }, [width, height])
 
   useEffect(() => {
@@ -65,5 +97,5 @@ export function SkinViewer3D({ skinUrl, capeUrl, slim, backEquipment = "cape", f
     viewer.playerWrapper.rotation.y = faceBack ? Math.PI : 0
   }, [faceBack])
 
-  return <canvas ref={canvasRef} className={cn("rounded-xl", className)} />
+  return <canvas data-ui="ui-skin-viewer-3d-canvas-1" ref={canvasRef} className={cn("rounded-xl", className)} />
 }

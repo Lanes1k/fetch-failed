@@ -124,6 +124,7 @@ export class LoaderResolver {
       case "custom":
         return this.getCustomVersionHandler();
     }
+    throw new Error(`Unknown loader: ${loaderType}`);
   }
 
   async installLoader(
@@ -133,7 +134,7 @@ export class LoaderResolver {
     onProgress?: DownloadProgressCallback,
   ): Promise<LoaderInstallResult> {
     if (loaderType === "vanilla") {
-      throw new Error("fetch failed");
+      throw new Error("Vanilla does not require loader installation");
     }
     if (loaderType === "custom") {
       return this.getCustomVersionHandler().install(loaderVersion, mcVersion, onProgress);

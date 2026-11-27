@@ -12,6 +12,8 @@ import type { LoaderMetaClient } from "../core/loader-meta-client.js";
 import { getLoaderMetaClient } from "../core/loader-meta-client-singleton.js";
 import { MetaClient } from "../core/meta-client.js";
 import type { ILoaderHandler } from "./types.js";
+import { PROFILE_REVISION } from "../core/profile-builder.js";
+import { ensureDirSync } from "../utils/sync.js";
 
 export class QuiltHandler implements ILoaderHandler {
   private loaderMetaClient: LoaderMetaClient;
@@ -46,7 +48,7 @@ export class QuiltHandler implements ILoaderHandler {
     const metaIntermediary = await this.loaderMetaClient.getVersion("net.fabricmc.intermediary", mcVersion);
 
     if (!metaQuilt || !metaIntermediary) {
-      throw new Error(`fetch failed${mcVersion}`);
+      throw new Error(`Quilt components not found in loader meta for MC ${mcVersion}`);
     }
 
     // 2. Fetch Base Minecraft JSON
@@ -55,7 +57,7 @@ export class QuiltHandler implements ILoaderHandler {
     // 3. Prepare profile
     const profileName = `quilt-loader-${quiltVersion}-${mcVersion}`;
     const versionDir = path.join(this.gameDir, "versions", profileName);
-    if (!fs.existsSync(versionDir)) fs.mkdirSync(versionDir, { recursive: true });
+    ensureDirSync(versionDir);
 
     // 4. Build VersionJson
     const versionJson: VersionJson = {
@@ -67,17 +69,19 @@ export class QuiltHandler implements ILoaderHandler {
       mainClass: metaQuilt.mainClass || "org.quiltmc.loader.impl.launch.knot.KnotClient",
       inheritsFrom: mcVersion,
       jar: mcVersion,
+      xnlcProfileRevision: PROFILE_REVISION,
+      arguments: metaQuilt.arguments,
       libraries: [
         ...(metaQuilt.libraries || []),
         ...(metaIntermediary.libraries || [])
       ],
-      traits: [...(metaQuilt["+traits"] || []), "quilt-loader"]
+      traits: [...(baseMcJson.traits || []), ...(metaQuilt["+traits"] || []), "quilt-loader"]
     };
 
     if (metaQuilt.arguments) {
       versionJson.arguments = {
-        game: [...(metaQuilt.arguments.game || []), ...(baseMcJson.arguments?.game || [])],
-        jvm: [...(metaQuilt.arguments.jvm || []), ...(baseMcJson.arguments?.jvm || [])],
+        game: metaQuilt.arguments.game,
+        jvm: metaQuilt.arguments.jvm,
       };
     }
 

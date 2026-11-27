@@ -1,3 +1,4 @@
+import { CONTENT_ENTER_DELAYED } from "../content-motion"
 import { useTranslation } from "react-i18next"
 import { IconSearch } from "@tabler/icons-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -29,11 +30,12 @@ interface InstanceBrowseToolbarProps {
 /** Список загрузчиков для фильтра — общий у браузеров модпаков и FTB. */
 export const MOD_LOADER_OPTIONS = [
   { id: "all", label: "all" },
-  { id: "vanilla", label: "fetch failed" },
-  { id: "forge", label: "fetch failed" },
-  { id: "fabric", label: "fetch failed" },
-  { id: "neoforge", label: "fetch failed" },
-  { id: "quilt", label: "fetch failed" },
+  { id: "vanilla", label: "Vanilla" },
+  { id: "forge", label: "Forge" },
+  { id: "fabric", label: "Fabric" },
+  { id: "neoforge", label: "NeoForge" },
+  { id: "quilt", label: "Quilt" },
+  { id: "liteloader", label: "LiteLoader" },
 ] as const
 
 export function InstanceBrowseToolbar({
@@ -57,10 +59,10 @@ export function InstanceBrowseToolbar({
   const sortLabels = getSortLabels(t)
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-3">
-      <div className="min-w-[280px] flex-1 relative">
+    <div data-ui="instance-instance-browse-toolbar-div-1" data-component="instance-browse-toolbar" className={`mb-4 flex flex-wrap items-center gap-3 ${CONTENT_ENTER_DELAYED}`}>
+      <div data-ui="instance-instance-browse-toolbar-div-2" className="min-w-[280px] flex-1 relative">
         <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <input
+        <input data-ui="instance-instance-browse-toolbar-input-1"
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
@@ -108,9 +110,9 @@ export function InstanceBrowseToolbar({
         <SelectContent>
           {MOD_LOADER_OPTIONS.map(loader => (
             <SelectItem key={loader.id} value={loader.id}>
-              <span className="flex items-center gap-2">
+              <span data-ui="instance-instance-browse-toolbar-span-1" className="flex items-center gap-2">
                 {loader.id !== "all" && <LoaderIcon loaderId={loader.id} className="w-4 h-4 flex-shrink-0" />}
-                <span>{loader.id === "all" ? t("builds.allLoaders") : loader.label}</span>
+                <span data-ui="instance-instance-browse-toolbar-span-2">{loader.id === "all" ? t("builds.allLoaders") : loader.label}</span>
               </span>
             </SelectItem>
           ))}

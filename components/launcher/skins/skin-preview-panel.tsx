@@ -1,16 +1,18 @@
-import { useState } from "react"
+import { CONTENT_ENTER_DELAYED } from "../content-motion"
+import { lazy, Suspense, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
-import { SkinViewer3D } from "@/components/ui/skin-viewer-3d"
 import { ElytraIcon } from "@/components/ui/elytra-icon"
 import { SkinAccountPicker } from "./account-picker"
 import { useViewerSize } from "./use-viewer-size"
 import type { SkinCardData } from "./skin-card"
 import type { McProfile } from "@xnlc/types"
 import {
-  IconLoader2, IconUser, IconCheck,
+  IconLoader2, IconUser, IconCheck, IconShirt,
   IconPencil, IconRefresh,
 } from "@tabler/icons-react"
+
+const SkinViewer3D = lazy(() => import("@/components/ui/skin-viewer-3d").then(module => ({ default: module.SkinViewer3D })))
 
 interface SkinPreviewPanelProps {
   selectedSkin: SkinCardData | undefined
@@ -63,12 +65,18 @@ export function SkinPreviewPanel({
   const skinVersionKey = skinVersion ?? 0
 
   return (
-    <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1">
+    <aside data-ui="skins-skin-preview-panel-aside-1" data-component="skin-preview-panel" className={`flex min-h-0 flex-col gap-3 overflow-y-auto pr-1 ${CONTENT_ENTER_DELAYED}`}>
       <SkinAccountPicker avatarVersion={skinVersionKey} />
 
       {/* Превью: высота подстраивается под окно */}
-      <div className="relative h-[clamp(200px,30vh,300px)] shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-muted/30 to-muted/10 shadow-inner">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,oklch(0.65_0.22_40/0.04)_0%,transparent_70%)]" />
+      <div data-ui="skins-skin-preview-panel-div-1" className="relative h-[clamp(200px,30vh,300px)] shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-card bg-gradient-to-b from-muted/30 to-muted/10 shadow-inner">
+        <div data-ui="skins-skin-preview-panel-div-2"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse at center, color-mix(in oklab, var(--ambient-primary) 4%, transparent) 0%, transparent 70%)",
+          }}
+        />
 
         {/*
           Кнопка «Элитра»: разворачивает персонажа спиной и показывает элитру —
@@ -76,15 +84,15 @@ export function SkinPreviewPanel({
           возвращает обычный вид. Элитра рендерится из той же текстуры, что и
           плащ, поэтому без выбранного плаща кнопка заблокирована.
         */}
-        <div className="absolute right-2 top-2 z-20">
-          <button
+        <div data-ui="skins-skin-preview-panel-div-3" className="absolute right-2 top-2 z-20">
+          <button data-ui="skins-skin-preview-panel-button-1"
             type="button"
             disabled={!selectedCapeUrl}
             aria-pressed={showElytra && Boolean(selectedCapeUrl)}
             onClick={() => setShowElytra((value) => !value)}
             title={selectedCapeUrl
-              ? t("skins.elytraHint", "fetch failed")
-              : t("skins.elytraNoCape", "fetch failed")}
+              ? t("skins.elytraHint", "Показать плащ как элитру")
+              : t("skins.elytraNoCape", "Сначала выберите плащ")}
             className={cn(
               "flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors",
               showElytra && selectedCapeUrl
@@ -94,15 +102,15 @@ export function SkinPreviewPanel({
             )}
           >
             <ElytraIcon className={cn("h-3.5 w-3.5", !(showElytra && selectedCapeUrl) && "opacity-70")} />
-            {t("skins.elytra", "fetch failed")}
+            {t("skins.elytra", "Элитра")}
           </button>
         </div>
 
-        <div ref={ref} className="relative z-10 grid h-full w-full place-items-center">
+        <div data-ui="skins-skin-preview-panel-div-4" ref={ref} className="relative z-10 grid h-full w-full place-items-center">
           {loading ? (
-            <IconLoader2 className="h-8 w-8 animate-spin text-muted-foreground/40" />
+            <IconLoader2 className="h-8 w-8 animate-spin text-primary" />
           ) : selectedSkin?.blobUrl ? (
-            <SkinViewer3D
+            <Suspense fallback={null}><SkinViewer3D
               skinUrl={selectedSkin.blobUrl}
               capeUrl={selectedCapeUrl}
               slim={selectedSkin.variant === "slim"}
@@ -110,11 +118,11 @@ export function SkinPreviewPanel({
               faceBack={showElytra && Boolean(selectedCapeUrl)}
               width={size.width}
               height={size.height}
-            />
+            /></Suspense>
           ) : (
-            <div className="flex flex-col items-center gap-2 text-muted-foreground/40">
+            <div data-ui="skins-skin-preview-panel-div-5" className="flex flex-col items-center gap-2 text-muted-foreground/40">
               <IconUser className="h-12 w-12 opacity-30" strokeWidth={1} />
-              <p className="text-[12px] font-medium">{t("skins.noSkin", "fetch failed")}</p>
+              <p data-ui="skins-skin-preview-panel-p-1" className="text-[12px] font-medium">{t("skins.noSkin", "Скин не установлен")}</p>
             </div>
           )}
         </div>
@@ -127,13 +135,13 @@ export function SkinPreviewPanel({
         отдельную иконку: раньше эта кнопка называлась «Изменить» и открывала
         модалку, из-за чего надеть скин из панели было нельзя.
       */}
-      <div className="flex shrink-0 gap-2">
-        <button
+      <div data-ui="skins-skin-preview-panel-div-6" className="flex shrink-0 gap-2">
+        <button data-ui="skins-skin-preview-panel-button-2"
           onClick={onApply}
           disabled={!hasPendingChange || !selectedSkin || loading || isApplying}
           title={hasPendingChange
-            ? t("skins.equipHint", "fetch failed")
-            : t("skins.alreadyEquipped", "fetch failed")}
+            ? t("skins.equipHint", "Надеть выбранный скин")
+            : t("skins.alreadyEquipped", "Этот скин уже надет")}
           className={cn(
             "flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200",
             hasPendingChange && selectedSkin
@@ -147,36 +155,36 @@ export function SkinPreviewPanel({
         >
           {isApplying ? (
             <IconLoader2 className="w-4 h-4 animate-spin" />
-          ) : (
+          ) : !hasPendingChange ? (
             <IconCheck className="w-4 h-4" />
-          )}
-          {hasPendingChange ? t("skins.equip", "fetch failed") : t("skins.equippedState", "fetch failed")}
+          ) : <IconShirt className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />}
+          {hasPendingChange ? t("skins.equip", "Экипировать") : t("skins.equippedState", "Надет")}
         </button>
 
         {hasPendingChange && canCancelSelection ? (
-          <button
+          <button data-ui="skins-skin-preview-panel-button-3"
             onClick={onCancelSelection}
             disabled={loading}
             className="flex items-center justify-center rounded-xl border border-border bg-card px-3.5 py-2.5 text-muted-foreground transition-all duration-200 hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
-            title={t("skins.cancel", "fetch failed")}
+            title={t("skins.cancel", "Отмена")}
           >
             <IconRefresh className="w-4 h-4" />
           </button>
         ) : (
           <>
-            <button
+            <button data-ui="skins-skin-preview-panel-button-4"
               onClick={onEdit}
               disabled={!selectedSkin || loading}
               className="flex items-center justify-center rounded-xl border border-border bg-card px-3.5 py-2.5 text-muted-foreground transition-all duration-200 hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
-              title={t("skins.editSkin", "fetch failed")}
+              title={t("skins.editSkin", "Изменить скин")}
             >
               <IconPencil className="w-4 h-4" />
             </button>
-            <button
+            <button data-ui="skins-skin-preview-panel-button-5"
               onClick={onReset}
               disabled={loading}
               className="flex items-center justify-center rounded-xl border border-primary/30 bg-primary/5 px-3.5 py-2.5 text-primary transition-all duration-200 hover:bg-primary/10 disabled:opacity-50"
-              title={t("skins.reset", "fetch failed")}
+              title={t("skins.reset", "Сбросить")}
             >
               <IconRefresh className="w-4 h-4" />
             </button>

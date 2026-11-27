@@ -6,15 +6,18 @@
 
 import { MojangVersionManifest, MojangVersionEntry, VersionJson } from "../types/index.js";
 import { URLS } from "../constants/urls.js";
+import { rewriteMinecraftUrl } from "@xnlc/urls/minecraft";
 import type { LoaderMetaClient } from "./loader-meta-client.js";
 import { getLoaderMetaClient } from "./loader-meta-client-singleton.js";
 import { withRetry } from "../retry.js";
 import * as path from "path";
 import * as fs from "fs/promises";
+import { libraryNameToPath } from "../utils/index.js";
+import { isCombatVersion, withCombatVersions } from "./combat-versions.js";
+import type { LoaderMetaVersion, VersionJsonAssetIndex, VersionJsonLibrary, VersionJsonLogging, VersionJsonDownload } from "../types/index.js";
 
 declare const fetch: typeof globalThis.fetch;
 
-const VERSION_MANIFEST_V2_URL = URLS.official.mojang.versionManifestV2;
 
 // Disk TTL cache for the version manifest, so the full Mojang manifest isn't
 // re-downloaded on every app start. Directory is provided by the host app via
@@ -60,7 +63,7 @@ export class MetaClient {
   private manifestCache: MojangVersionManifest | null = null;
   private loaderClient: LoaderMetaClient;
 
-  constructor() {
+  constructor(private resourceDir?: string) {
     this.loaderClient = getLoaderMetaClient();
   }
 
@@ -69,27 +72,27 @@ export class MetaClient {
 
     const cached = await loadCachedManifest();
     if (cached?.fresh) {
-      this.manifestCache = cached.data;
-      return cached.data;
+      this.manifestCache = withCombatVersions(cached.data);
+      return this.manifestCache;
     }
 
     try {
-      const res = await withRetry(async () => fetch(VERSION_MANIFEST_V2_URL));
+      const res = await withRetry(async () => fetch(URLS.official.mojang.versionManifestV2));
       if (!res.ok) {
-        throw new Error(`fetch failed${res.status} ${res.statusText}`);
+        throw new Error(`Failed to fetch version manifest: ${res.status} ${res.statusText}`);
       }
 
       const data = (await res.json()) as MojangVersionManifest;
-      this.manifestCache = data;
+      this.manifestCache = withCombatVersions(data);
       await persistManifest(data);
-      return data;
+      return this.manifestCache;
     } catch (err) {
       // Network is unavailable but we have an older cached manifest — use it
       // as a fallback so installed versions can still be shown and launched offline.
       if (cached?.data) {
         console.warn("[MetaClient] Network unavailable — using stale cached version manifest");
-        this.manifestCache = cached.data;
-        return cached.data;
+        this.manifestCache = withCombatVersions(cached.data);
+        return this.manifestCache;
       }
       throw err;
     }
@@ -107,20 +110,28 @@ export class MetaClient {
 
     const installedJson = await this.readInstalledVersionJson(versionId);
     if (installedJson) {
+      this.normalizeLegacyVersion(installedJson, versionId);
       this.cache.set(versionId, installedJson);
       return installedJson;
     }
 
+    if (isCombatVersion(versionId)) {
+      const data = await this.fetchCombatVersion(versionId);
+      this.normalizeLegacyVersion(data, versionId);
+      this.cache.set(versionId, data);
+      return data;
+    }
+
     const entry = await this.getVersionEntry(versionId);
     if (!entry) {
-      throw new Error(`fetch failed${versionId}fetch failed`);
+      throw new Error(`Version "${versionId}" not found in manifest`);
     }
 
     let data: VersionJson;
     try {
-      const res = await withRetry(async () => fetch(entry.url));
+      const res = await withRetry(async () => fetch(rewriteMinecraftUrl(entry.url)));
       if (!res.ok) {
-        throw new Error(`fetch failed${versionId}": ${res.status} ${res.statusText}`);
+        throw new Error(`Failed to fetch version JSON for "${versionId}": ${res.status} ${res.statusText}`);
       }
       data = (await res.json()) as VersionJson;
     } catch (err) {
@@ -196,6 +207,7 @@ export class MetaClient {
       console.warn(`[MetaClient] Failed to fetch loader meta for Minecraft ${versionId}; using raw Mojang data`);
     }
 
+    this.normalizeLegacyVersion(data, versionId);
     this.cache.set(versionId, data);
     return data;
   }
@@ -205,13 +217,71 @@ export class MetaClient {
     return manifest.latest.release;
   }
 
+  private async fetchCombatVersion(versionId: string): Promise<VersionJson> {
+    const component = await this.loaderClient.getVersion("net.minecraft", versionId) as LoaderMetaVersion & {
+      mainJar?: { downloads?: { artifact?: VersionJsonDownload } };
+      assetIndex?: VersionJsonAssetIndex;
+      compatibleJavaMajors?: number[];
+      compatibleJavaName?: string;
+      logging?: NonNullable<VersionJsonLogging["client"]>;
+    };
+    const client = component.mainJar?.downloads?.artifact;
+    if (!client?.url || !component.mainClass || !component.assetIndex?.url) {
+      throw new Error(`Incomplete combat snapshot metadata: ${versionId}`);
+    }
+
+    const libraries: VersionJsonLibrary[] = [...(component.libraries ?? []), ...(component["+libraries"] ?? [])];
+    // Prism хранит LWJGL отдельным обязательным компонентом. Без него JAR
+    // скачивается, но запуск заканчивается ClassNotFoundException.
+    for (const requirement of component.requires ?? []) {
+      const requiredVersion = requirement.equals ?? (requirement as { suggests?: string }).suggests;
+      if (requirement.uid !== "org.lwjgl3" || !requiredVersion) {
+        throw new Error(`Unsupported combat snapshot dependency: ${requirement.uid}`);
+      }
+      const lwjgl = await this.loaderClient.getVersion(requirement.uid, requiredVersion);
+      libraries.push(...(lwjgl.libraries ?? []), ...(lwjgl["+libraries"] ?? []));
+    }
+
+    return {
+      id: versionId,
+      type: "snapshot",
+      releaseTime: component.releaseTime,
+      mainClass: component.mainClass,
+      minecraftArguments: component.minecraftArguments,
+      arguments: component.arguments,
+      downloads: { client },
+      assetIndex: component.assetIndex,
+      assets: component.assetIndex.id,
+      javaVersion: { component: component.compatibleJavaName ?? "jre-legacy", majorVersion: component.compatibleJavaMajors?.[0] ?? 8 },
+      logging: component.logging ? { client: component.logging } : undefined,
+      traits: component["+traits"],
+      libraries,
+    };
+  }
+
+  private normalizeLegacyVersion(data: VersionJson, versionId: string): void {
+    // Компоненты Prism допускают отсутствие path; процессоры старого Forge
+    // читают vanilla JSON напрямую и требуют явного downloads.artifact.path.
+    for (const library of data.libraries ?? []) {
+      const artifact = library.downloads?.artifact;
+      if (artifact && !artifact.path) artifact.path = libraryNameToPath(library.name);
+      for (const [classifier, entry] of Object.entries(library.downloads?.classifiers ?? {})) {
+        if (!entry.path) entry.path = libraryNameToPath(library.name).replace(/\.jar$/, `-${classifier}.jar`);
+      }
+    }
+    // Для старого Mojang JSON эти признаки нужны даже без доступа к Prism meta.
+    if (/^1\.[0-5](?:\.\d+)?$/.test(versionId) || data.type === "old_beta") {
+      data.traits = Array.from(new Set([...(data.traits ?? []), "legacyLaunch"]));
+    }
+  }
+
   async getLatestSnapshot(): Promise<string> {
     const manifest = await this.fetchManifest();
     return manifest.latest.snapshot;
   }
 
   private async readInstalledVersionJson(versionId: string): Promise<VersionJson | null> {
-    const root = process.env.XNLC_GAME_DIR;
+    const root = this.resourceDir ?? process.env.XNLC_GAME_DIR;
     if (!root) return null;
     const file = path.join(root, "versions", versionId, `${versionId}.json`);
     try {

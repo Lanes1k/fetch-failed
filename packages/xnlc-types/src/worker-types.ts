@@ -1,3 +1,5 @@
+import type { MinecraftProgress, JavaProgress } from "./launch-types.js"
+
 // ============================================================
 // @xnlc/types — Worker Types
 // Message types for the forked launch worker process
@@ -8,6 +10,20 @@ export type WorkerAccountPayload = {
   username: string
   uuid?: string
   accessToken?: string
+  // ── Authlib-Injector (заполняется только для type === "authlib-injector") ──
+  serverId?: string
+  serverUrl?: string
+  serverName?: string
+}
+
+/** Данные запуска для аккаунта Authlib-Injector: где инжектор и какая метадата. */
+export type WorkerAuthlibInjectorPayload = {
+  /** Локальный путь к authlib-injector.jar (уже скачан/проверен) */
+  injectorPath: string
+  /** API root сервера с завершающим слэшем */
+  serverUrl: string
+  /** Base64 от JSON метаданных для -Dauthlibinjector.yggdrasil.prefetched */
+  prefetchedMetadata?: string
 }
 
 export type WorkerLaunchPayload = {
@@ -17,6 +33,7 @@ export type WorkerLaunchPayload = {
     mcVersion: string
     loaderType: string
     loaderVersion?: string
+    customVersionPath?: string
     memoryMin: string
     memoryMax: string
     width: number
@@ -24,6 +41,12 @@ export type WorkerLaunchPayload = {
     javaPath?: string
     javaArgs?: string
     retroauthEnabled: boolean
+    /**
+     * Authlib-Injector для аккаунта type === "authlib-injector".
+     * Присутствует ⇒ воркер добавит -javaagent:authlib-injector.jar=<serverUrl>
+     * + -Dauthlibinjector.side=client + -Dauthlibinjector.yggdrasil.prefetched.
+     */
+    authlibInjector?: WorkerAuthlibInjectorPayload
     useBmclapi?: boolean
     server?: string
     serverPort?: string
@@ -42,8 +65,8 @@ export type WorkerLaunchPayload = {
 export type WorkerMessage =
   | { type: "launch"; payload: WorkerLaunchPayload }
   | { type: "stop" }
-  | { type: "progress"; progress: Record<string, unknown> }
-  | { type: "java-progress"; progress: { type: string; percent: number; message: string } }
+  | { type: "progress"; progress: MinecraftProgress }
+  | { type: "java-progress"; progress: JavaProgress }
   | { type: "started"; pid?: number }
   | { type: "stdout"; data: string }
   | { type: "stderr"; data: string }

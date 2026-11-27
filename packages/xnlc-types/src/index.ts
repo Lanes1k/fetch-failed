@@ -4,8 +4,11 @@
 // ============================================================
 
 // Domain types
+export type { AgentToolCall, AgentWireMessage, AgentToolSpec, AgentTurnRequest, AgentTurnResult, AgentAttachment, AgentTimelineItem, AgentChatSummary, AgentChat, AgentBuildFileRequest, AgentMcpServerConfig, AgentMcpServerState, AgentMcpServerSummary, AgentMcpToolInfo, AgentWebSearchResult, AgentWebSearchResponse, AgentWebPageLink, AgentWebFetchResponse } from "./agent-types.js"
 export type {
   DbAccount,
+  PublicAccount,
+  CloudAccountPreview,
   DbBuild,
   DbBuildLight,
   DbBuildMod,
@@ -13,6 +16,8 @@ export type {
   DatapackInfo,
   ScreenshotInfo,
   AuthPayload,
+  MicrosoftAuthStage,
+  MicrosoftAuthProgress,
   ElyByPayload,
   XnSkinsPayload,
   MicrosoftPayload,
@@ -22,6 +27,7 @@ export type {
   MinecraftVersionInfo,
   VersionEntry,
   MinecraftNewsEntry,
+  LauncherNewsEntry,
   ImportableLauncherInstance,
   BuildExportCategory,
   CloudUploadCategory,
@@ -31,10 +37,13 @@ export type {
   CloudFile,
   CloudStorageInfo,
   BuildIntentScanResult,
+  BuildContentManifest,
+  BuildContentDelta,
   ModpackImportMod,
   ModpackImportResult,
   ModpackImportConflict,
   ImportProgress,
+  ImportProgressFile,
   ContentDownloadProgress,
   QuickPlayEntry,
   McProfile,
@@ -55,6 +64,30 @@ export type {
   StorageCleanTarget,
   StorageCleanResult,
 } from "./domain-types.js"
+
+// Authlib-Injector (Yggdrasil) — контракты третьего типа аккаунта.
+// Реализация (resolve сервера, Yggdrasil-клиент, javaagent) — в main.
+export type {
+  AuthlibInjectorMetadata,
+  AuthlibInjectorServer,
+  AuthlibInjectorServerSummary,
+  AuthlibInjectorAccountData,
+  AuthlibInjectorLoginResult,
+  AuthlibInjectorErrorPayload,
+  AuthlibInjectorErrorOutcome,
+  AuthlibProbeOutcome,
+  AuthlibAddServerOutcome,
+  AuthlibLoginOutcome,
+  AuthlibLoginPhase,
+  AuthlibLoginProgress,
+  AuthlibSessionStatus,
+  AuthlibSessionOutcome,
+  AuthlibRemoveServerResult,
+  YggdrasilGameProfile,
+  YggdrasilTextures,
+  YggdrasilProfileWithTextures,
+  YggdrasilAuthenticationResponse,
+} from "./authlib-types.js"
 
 // Laby (каталог скинов) — только контракты, которые пересекают границу
 // main ↔ renderer. Реализация (запросы, маппинг, кэш, фильтры) — в `@xnlc/skins`.
@@ -96,13 +129,13 @@ export type {
 
 // IPC contracts
 export type {
+  ModpackContents,
+  ModdexReviews,
   IpcInvokeMap,
   IpcEventMap,
-  ElectronAPIExplicit,
-  ElectronAPIExtra,
-  ElectronAPI,
-  BuildLoaderRequirementIssue,
-  BuildLoaderRequirementReport,
+  ElectrobunAPIExplicit,
+  ElectrobunAPIExtra,
+  ElectrobunAPI,
 } from "./ipc-contracts.js"
 
 // Launch types
@@ -118,6 +151,7 @@ export type {
 // Worker types
 export type {
   WorkerAccountPayload,
+  WorkerAuthlibInjectorPayload,
   WorkerLaunchPayload,
   WorkerMessage,
 } from "./worker-types.js"
@@ -135,3 +169,12 @@ export type {
   McServerDownloadProgress,
   ServerStatusResult,
 } from "./server-types.js"
+
+export type { AiProtocol, AiModelConfig, AiConfig, AiConfigStatus, AiConfigUpdate, AiModelDiscovery } from "./agent-types.js"
+export type { AgentHardware } from "./agent-types.js"
+export type { ShareRequest, ShareResponse, ShareResult, ShareLink, ShareContentPresentation, ShareProgress } from "./share-types.js"
+export type { ServerHostSettingsCommand, ServerHostSettings, ServerPermissions, ServerPermission, RemoteServerMember, RemoteServerAccess, RemoteServerRequest, RemoteServerResponse } from "./remote-server-types.js"
+
+export type { Theme, ThemeColorKey, ThemeGlow, ThemeFont, ThemeBackground, ThemeAppearance } from "./theme-types.js"
+export type { LocalThemeFile, LocalThemeSnapshot, LocalThemeImport } from "./theme-types.js"
+export type { LiveopsThemeRef, LiveopsStatus } from "./theme-types.js"

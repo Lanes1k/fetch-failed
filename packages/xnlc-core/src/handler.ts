@@ -17,6 +17,8 @@ async function ask(question: string): Promise<string> {
 
 export interface HandlerOptions {
   gameDir?: string;
+  resourceDir?: string;
+  javaRoot?: string;
   javaPath?: string;
   memoryMax?: string;
   memoryMin?: string;
@@ -67,6 +69,8 @@ export class XnlcHandler {
   constructor(options: HandlerOptions = {}) {
     this.xnlc = new Xnlc({
       gameDir: options.gameDir ?? './minecraft',
+      resourceDir: options.resourceDir,
+      javaRoot: options.javaRoot,
       javaPath: options.javaPath,
       defaultJvmArgs: [],
     });
@@ -276,7 +280,7 @@ export class XnlcHandler {
     const loaderInput = await ask('Select loader (1-' + loaderNames.length + '): ');
     const loaderIdx = parseInt(loaderInput) - 1;
     if (loaderIdx < 0 || loaderIdx >= loaders.length) {
-      throw new Error('fetch failed');
+      throw new Error('Invalid loader selection');
     }
 
     const selectedLoader = loaders[loaderIdx]!;
@@ -285,7 +289,7 @@ export class XnlcHandler {
     const mcVersions = await selectedLoader.getVersions();
     
     if (mcVersions.length === 0) {
-      throw new Error(`fetch failed${selectedLoader.name}`);
+      throw new Error(`No Minecraft versions support ${selectedLoader.name}`);
     }
 
     console.log(`\nSupported Minecraft versions for ${selectedLoader.name}:`);
@@ -295,7 +299,7 @@ export class XnlcHandler {
     const mcInput = await ask('\nSelect Minecraft version (number): ');
     const mcIdx = parseInt(mcInput) - 1;
     if (mcIdx < 0 || mcIdx >= mcVersions.length) {
-      throw new Error('fetch failed');
+      throw new Error('Invalid version selection');
     }
     const mcVersion = mcVersions[mcIdx]!;
 

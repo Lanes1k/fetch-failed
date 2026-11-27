@@ -1,6 +1,6 @@
 {
   "name": "@xnlc/mods",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "XNLC Mods — Modrinth and CurseForge API client for Minecraft mod search and management",
   "type": "module",
   "author": "MAINER4IK",
@@ -29,10 +29,11 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "bun --bun run tsc -p tsconfig.json",
     "clean": "rm -rf lib",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "bun run build"
   },
+  "dependencies": { "@xnlc/urls": "workspace:*" },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "files": [

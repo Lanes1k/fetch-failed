@@ -29,7 +29,7 @@ export function parseLabyTags(value: unknown): string[] {
 /** У скинов Laby нет имён — подписью служит первый тег. */
 export function labySkinName(tags: string[], hash: string): string {
   if (tags.length > 0) return tags[0]
-  return hash ? `fetch failed${hash.slice(0, 6)}` : "Skin"
+  return hash ? `Skin #${hash.slice(0, 6)}` : "Skin"
 }
 
 /** Сырой элемент `results` из Laby в модель лаунчера. */

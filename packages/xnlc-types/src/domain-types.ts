@@ -4,6 +4,7 @@
 // ============================================================
 
 import type { ModVersion } from "./mod-types.js"
+import type { YggdrasilGameProfile } from "./authlib-types.js"
 
 // ── Database Types ──────────────────────────────────────────
 
@@ -26,7 +27,7 @@ export type CloudUploadCategory =
 
 export type DbAccount = {
   id: string
-  type: "elyby" | "xnskins" | "microsoft" | "offline"
+  type: "elyby" | "xnskins" | "microsoft" | "offline" | "authlib-injector"
   username: string
   isActive: boolean
   uuid?: string
@@ -36,7 +37,26 @@ export type DbAccount = {
   skinUrl?: string
   /** Display order in the accounts list */
   sortOrder?: number
+
+  // ── Authlib-Injector (type === "authlib-injector") ──
+  /** Id authorization server в authlib_servers — аккаунт жёстко привязан к серверу */
+  serverId?: string
+  /** API root сервера (дубль для восстановления при недоступной таблице серверов) */
+  serverUrl?: string
+  serverName?: string
+  /** clientToken Yggdrasil-сессии (не путать с OAuth clientId) */
+  yggClientToken?: string
+  /** Ожидаемая истекание access token (epoch ms), если сервер сообщил */
+  expiresAt?: number
+  /** JSON: выбранный и доступные профили Yggdrasil-аккаунта */
+  profiles?: string
 }
+
+/** Публичный снимок: сессионные данные принадлежат только main. */
+export type PublicAccount = Pick<DbAccount, "id" | "type" | "username" | "isActive" | "uuid" | "skinUrl" | "sortOrder" | "serverId" | "serverUrl" | "serverName" | "expiresAt">
+
+/** Только отображение облачной копии, без сессий и токенов. */
+export type CloudAccountPreview = Pick<PublicAccount, "type" | "username" | "uuid" | "skinUrl">
 
 export type DbBuildMod = {
   id: string
@@ -48,6 +68,8 @@ export type DbBuildMod = {
   source?: "local" | "modrinth" | "curseforge"
   projectId?: string
   modId?: number
+  versionId?: string
+  fileId?: number
   author?: string
   enabled?: boolean
 }
@@ -59,13 +81,18 @@ export type DbBuild = {
   version: string
   modLoader: string
   loaderVersion?: string
+  /** Импортированная клиентская версия внутри <gameDir>/versions. */
+  customVersionPath?: string
   icon: string
   coverImage?: string
   mods: DbBuildMod[]
   resourcepacks?: DbBuildMod[]
   shaders?: DbBuildMod[]
+  modsCount?: number
+  resourcepacksCount?: number
+  shadersCount?: number
   createdAt: string
-  source: "local" | "modrinth" | "curseforge"
+  source: "local" | "modrinth" | "curseforge" | "ftb"
   projectSlug?: string
   modpackVersion?: string
   /** Id конкретной версии модпака на площадке (только у связанных модпаков). */
@@ -139,9 +166,18 @@ export type WorldInfo = {
 
 export type DatapackInfo = {
   name: string
+  displayName?: string
+  iconUrl?: string
+  author?: string
+  projectId?: string
   sizeBytes: number
   lastModified: number
   path: string
+  description?: string
+  packFormat?: number
+  format?: "datapack" | "resourcepack" | "hybridpack" | "unknownpack"
+  namespaces?: string[]
+  parseError?: string
 }
 
 export type ScreenshotInfo = {
@@ -157,9 +193,8 @@ export type ScreenshotInfo = {
 export type AuthPayload = {
   id: string
   username: string
-  uuid: string
-  accessToken: string
-  refreshToken: string
+  uuid?: string
+  skinUrl?: string
 }
 
 /** @deprecated Use AuthPayload directly */
@@ -172,8 +207,7 @@ export type MicrosoftPayload = AuthPayload
 export type AuthSession = {
   uuid: string
   username: string
-  accessToken: string
-  profileId: string
+  profileId?: string
   profileName?: string
 }
 
@@ -220,6 +254,22 @@ export type MinecraftNewsEntry = {
   newsType?: string[]
 }
 
+export type LauncherNewsEntry = {
+  id: string
+  title: string
+  tag?: string
+  category?: string
+  date: string
+  text?: string
+  content?: string
+  readMoreLink?: string
+  imageUrl?: string
+  playPageImage?: { url?: string }
+  newsPageImage?: { url?: string }
+  newsType?: string[]
+  author?: string
+}
+
 // ── Importable Instances ────────────────────────────────────
 
 export type ImportableLauncherInstance = {
@@ -230,7 +280,7 @@ export type ImportableLauncherInstance = {
   loaderVersion?: string
   icon?: string
   path: string
-  source: "gdlauncher" | "prism" | "multimc" | "polymc" | "astralrinth" | "xlauncher" | "modrinthapp"
+  source: "gdlauncher" | "prism" | "multimc" | "polymc" | "xlauncher" | "modrinthapp" | "millida"
   modCount?: number
   resourcepackCount?: number
   shaderCount?: number
@@ -296,6 +346,19 @@ export type BuildIntentScanResult = {
 }
 
 // ── Modpack Import Result ───────────────────────────────────
+/** Клиентский снимок: сервер не удерживает сессии синхронизации. */
+export type BuildContentManifest = { mods: Record<string,string>; resourcepacks: Record<string,string>; shaders: Record<string,string>; installedMods: Record<string,string> }
+export type BuildContentDelta = {
+  mods: {upsert:DbBuildMod[];remove:string[];order?:string[]}
+  resourcepacks: {upsert:DbBuildMod[];remove:string[];order?:string[]}
+  shaders: {upsert:DbBuildMod[];remove:string[];order?:string[]}
+  installedMods: {upsert:Record<string,string>;remove:string[]}
+  manifest: BuildContentManifest
+}
+
+/** Только название этапа и несекретный id попытки; сессионные данные остаются в main. */
+export type MicrosoftAuthStage = "device-code" | "waiting" | "microsoft-token" | "xbox-live" | "xsts" | "minecraft-token" | "profile" | "saving" | "complete" | "error"
+export type MicrosoftAuthProgress = { requestId: string; stage: MicrosoftAuthStage }
 
 export type ModpackImportMod = {
   id: string
@@ -324,6 +387,8 @@ export type ModpackImportResult = {
   version?: string
   modLoader?: string
   loaderVersion?: string
+  /** Импортированная клиентская версия внутри <gameDir>/versions. */
+  customVersionPath?: string
   modpackVersion?: string
   /** Id установленной версии модпака — нужен, чтобы «Восстановить» ставил именно её */
   modpackVersionId?: string
@@ -337,7 +402,27 @@ export type ModpackImportResult = {
 
 // ── Import Progress ─────────────────────────────────────────
 
+export type ImportProgressFile = {
+  id: string
+  name: string
+  fileName: string
+  iconUrl?: string
+  kind?: "mod" | "resourcepack" | "shader" | "file"
+  status: "queued" | "downloading" | "complete" | "error" | "cancelled"
+}
+
 export type ImportProgress = {
+  messageKey?: string
+  messageParams?: Record<string, string | number>
+  operation?: "modpack" | "archive" | "launcher" | "update"
+  phase?: "preparing" | "package" | "files" | "extracting" | "copying" | "scanning" | "complete" | "cancelling"
+  source?: "modrinth" | "curseforge" | "ftb" | "local"
+  title?: string
+  iconUrl?: string
+  files?: ImportProgressFile[]
+  file?: ImportProgressFile
+  fileCount?: number
+  completedFiles?: number
   current: number
   total: number
   message: string
@@ -345,6 +430,7 @@ export type ImportProgress = {
 }
 
 export type ContentDownloadProgress = {
+  downloadId?: string
   fileName: string
   current: number
   total: number
@@ -359,7 +445,15 @@ export type ContentDownloadProgress = {
 
 export type MinecraftSkin = { id: string; state: string; url: string; variant: "CLASSIC" | "SLIM" }
 export type MinecraftCape = { id: string; state: string; url: string; alias?: string }
-export type McProfile = { id: string; name: string; skins: MinecraftSkin[]; capes: MinecraftCape[] }
+export type McProfile = {
+  id: string
+  name: string
+  skins: MinecraftSkin[]
+  capes: MinecraftCape[]
+  uploadableTextures?: string
+  /** Серверная текстура сопоставлена с локальной записью; null — внешний скин. */
+  equippedLibrarySkinId?: string | null
+}
 
 export type LibrarySkin = {
   id: string

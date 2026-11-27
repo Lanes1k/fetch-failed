@@ -1,26 +1,15 @@
+import { IconX as LauncherCancelIcon } from "@tabler/icons-react"
+import { useContentEnter } from "../content-motion"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { formatBytes, formatDateTime, formatPlaytime } from "@/lib/format"
-import {
-  IconArchive,
-  IconCopy,
-  IconDownload,
-  IconFolderOpen,
-  IconInfoCircle,
-  IconLoader2,
-  IconMap,
-  IconPhoto,
-  IconRefresh,
-  IconSearch,
-  IconTrash,
-  IconUpload,
-  IconX,
-  IconCheck,
-  IconList,
-} from "@tabler/icons-react"
+import { datapackVersionFile, datapackVersions } from "@/lib/datapack-version"
+import { findInstalledDatapack } from "@/lib/datapack-installed"
+import { IconArchive, IconCopy, IconDownload, IconFolder, IconInfoCircle, IconLoader2, IconMap, IconPhoto, IconRefresh, IconSearch, IconTrash, IconUpload, IconX, IconCheck, IconList } from "@tabler/icons-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { ModalTitleIcon } from "@/components/ui/modal-title-icon"
 import { Checkbox } from "@/components/ui/checkbox"
 import { formatDownloads } from "./utils"
 import { Pagination } from "./pagination"
@@ -28,7 +17,10 @@ import { EmptyState } from "@/components/ui/empty-state"
 import { InstanceModal } from "./instance-modal"
 import { CategoryBadge } from "./category-badge"
 import { ModalLayer } from "@/components/ui/modal-layer"
+import { ActionConfirmDialog } from "./action-confirm-dialog"
 import { useAlertDialog } from "@/lib/use-alert-dialog"
+import { useActivityCenter } from "@/src/ActivityCenterContext"
+import { isContentDownloadCancelled } from "@/lib/content-download"
 import type { Build, DatapackInfo, ModalTab, ModDetails, ModSearchResult, ModVersion, Source, WorldInfo, ModSort } from "./types"
 
 // CurseForge отдаёт категории карт (classId 17) вместе с их названиями и иконками.
@@ -52,10 +44,12 @@ function copyToClipboard(text: string): void {
 
 export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
   const { t } = useTranslation()
+  const { beginContentInstall, endContentInstall, pushNotification } = useActivityCenter()
   const [worlds, setWorlds] = useState<WorldInfo[] | null>(null)
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
   const [datapacks, setDatapacks] = useState<DatapackInfo[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const contentEnter = useContentEnter(!loading)
 
   // Режим просмотра: «Установленные миры» или «Каталог карт»
   const [viewMode, setViewMode] = useState<"installed" | "catalog">("installed")
@@ -113,7 +107,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
   const refreshWorlds = useCallback(async () => {
     setLoading(true)
     try {
-      const list = await window.electronAPI?.listWorlds(build.name)
+      const list = await window.electrobunAPI?.listWorlds(build.name)
       setWorlds(list ?? [])
       setSelectedFolder(prev => {
         if (prev && list?.some(w => w.folder === prev)) return prev
@@ -130,7 +124,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
 
   // Подписка на прогресс скачивания карт/датапаков
   useEffect(() => {
-    const off = window.electronAPI?.onContentDownloadProgress?.((progress) => {
+    const off = window.electrobunAPI?.onContentDownloadProgress?.((progress) => {
       setMapDownloadProgress(progress)
     })
     return () => off?.()
@@ -139,7 +133,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
   useEffect(() => {
     let active = true
     setMapCategoriesLoading(true)
-    window.electronAPI?.modsCurseforgeCategories?.().then((cats) => {
+    window.electrobunAPI?.modsCurseforgeCategories?.().then((cats) => {
       if (!active) return
       const worldCats = ((cats ?? []) as Array<{ name: string; icon: string; header: string; projectType: string; slug?: string; cfCategoryId?: number }>)
         .filter((c) => c.projectType === "world")
@@ -161,7 +155,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     try {
       const gv = matchVer ? build.version : undefined
       const categories = cats.length > 0 ? cats : undefined
-      const resp = await window.electronAPI?.modsCurseforgeSearch(
+      const resp = await window.electrobunAPI?.modsCurseforgeSearch(
         query.trim(),
         "world" as never,
         gv,
@@ -195,15 +189,15 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     try {
       let downloadUrl = ""
       if (map.primaryFileId) {
-        downloadUrl = await window.electronAPI?.modsCurseforgeDownloadUrl(map.primaryFileId, map.modId) ?? ""
+        downloadUrl = await window.electrobunAPI?.modsCurseforgeDownloadUrl(map.primaryFileId, map.modId) ?? ""
       }
       if (!downloadUrl) {
-        const details = await window.electronAPI?.modsCurseforgeDetails(map.modId)
+        const details = await window.electrobunAPI?.modsCurseforgeDetails(map.modId)
         const file = details?.versions?.find(v => v.files?.[0]?.url)?.files?.[0]
         if (file?.url) {
           downloadUrl = file.url
         } else if (details?.versions?.[0]?.id) {
-          downloadUrl = await window.electronAPI?.modsCurseforgeDownloadUrl(Number(details.versions[0].id), map.modId) ?? ""
+          downloadUrl = await window.electrobunAPI?.modsCurseforgeDownloadUrl(Number(details.versions[0].id), map.modId) ?? ""
         }
       }
 
@@ -212,7 +206,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
         return
       }
 
-      const res = await window.electronAPI?.importWorldRemote(build.name, downloadUrl, map.name)
+      const res = await window.electrobunAPI?.importWorldRemote(build.name, downloadUrl, map.name)
       if (res?.success) {
         setInstalledMapIds(prev => new Set(prev).add(map.id))
         await refreshWorlds()
@@ -232,7 +226,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     if (!map.modId) return
     setLoadingModal(true)
     try {
-      const details = await window.electronAPI?.modsCurseforgeDetails(map.modId)
+      const details = await window.electrobunAPI?.modsCurseforgeDetails(map.modId)
       if (details) {
         setSelectedDetails(details)
         setDisplayedModalVersions(details.versions ?? [])
@@ -250,12 +244,12 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
   const handleInstallMapVersion = async (version: ModVersion) => {
     if (!selectedDetails) return
     const url = version.downloadUrl || version.files?.[0]?.url
-      || (selectedDetails.modId ? await window.electronAPI?.modsCurseforgeDownloadUrl(Number(version.id), selectedDetails.modId) : null)
+      || (selectedDetails.modId ? await window.electrobunAPI?.modsCurseforgeDownloadUrl(Number(version.id), selectedDetails.modId) : null)
     if (!url) {
       showAlert(t("worlds.errors.getMapDownloadLink"))
       return
     }
-    const res = await window.electronAPI?.importWorldRemote(build.name, url, selectedDetails.name)
+    const res = await window.electrobunAPI?.importWorldRemote(build.name, url, selectedDetails.name)
     if (res?.success) {
       if (selectedDetails.id) setInstalledMapIds(prev => new Set(prev).add(selectedDetails.id))
       await refreshWorlds()
@@ -268,7 +262,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
 
   const refreshDatapacks = useCallback(async (folder: string) => {
     try {
-      const list = await window.electronAPI?.listWorldDatapacks(build.name, folder)
+      const list = await window.electrobunAPI?.listWorldDatapacks(build.name, folder)
       setDatapacks(list ?? [])
     } catch {
       setDatapacks([])
@@ -294,8 +288,8 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
       // `as never` keeps this compiling against old @xnlc/types where
       // ModContentType has no "datapack" member yet.
       const response = src === "modrinth"
-        ? await window.electronAPI?.modsModrinthSearch(query.trim(), "datapack" as never, undefined, undefined, "downloads", 0)
-        : await window.electronAPI?.modsCurseforgeSearch(query.trim(), "datapack" as never, undefined, undefined, "downloads", 0)
+        ? await window.electrobunAPI?.modsModrinthSearch(query.trim(), "datapack" as never, undefined, undefined, "downloads", 0)
+        : await window.electrobunAPI?.modsCurseforgeSearch(query.trim(), "datapack" as never, undefined, undefined, "downloads", 0)
       setResults(response?.results ?? [])
     } catch {
       setResults([])
@@ -318,7 +312,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     }
     setRenaming(true)
     try {
-      const result = await window.electronAPI?.renameWorld(build.name, selectedWorld.folder, newName)
+      const result = await window.electrobunAPI?.renameWorld(build.name, selectedWorld.folder, newName)
       if (result?.success) {
         const newFolder = newName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "").slice(0, 64).replace(/\s+/g, "_")
         await refreshWorlds()
@@ -340,7 +334,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     try {
       if (namePrompt.mode === "copy") {
         if (!selectedWorld) return
-        const result = await window.electronAPI?.copyWorld(build.name, selectedWorld.folder, name)
+        const result = await window.electrobunAPI?.copyWorld(build.name, selectedWorld.folder, name)
         if (result?.success) {
           setNamePrompt(null)
           await refreshWorlds()
@@ -349,7 +343,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
           showAlert(result?.error ?? t("worlds.errors.copy"))
         }
       } else {
-        const result = await window.electronAPI?.importWorldZip(build.name, namePrompt.pendingFile ?? "", name || undefined)
+        const result = await window.electrobunAPI?.importWorldZip(build.name, namePrompt.pendingFile ?? "", name || undefined)
         if (result?.success) {
           setNamePrompt(null)
           await refreshWorlds()
@@ -365,7 +359,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
 
   const handleResetIcon = async () => {
     if (!selectedWorld) return
-    const result = await window.electronAPI?.resetWorldIcon(build.name, selectedWorld.folder)
+    const result = await window.electrobunAPI?.resetWorldIcon(build.name, selectedWorld.folder)
     if (result?.success) await refreshWorlds()
     else showAlert(result?.error ?? t("worlds.errors.resetIcon"))
   }
@@ -374,7 +368,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     if (!selectedWorld) return
     setDeleting(true)
     try {
-      const result = await window.electronAPI?.deleteWorld(build.name, selectedWorld.folder)
+      const result = await window.electrobunAPI?.deleteWorld(build.name, selectedWorld.folder)
       if (result?.success) {
         setDeleteOpen(false)
         await refreshWorlds()
@@ -389,13 +383,13 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
   const handleSetIcon = async (file: File) => {
     if (!selectedWorld) return
     const dataUrl = await readFileAsDataUrl(file)
-    const result = await window.electronAPI?.setWorldIcon(build.name, selectedWorld.folder, dataUrl)
+    const result = await window.electrobunAPI?.setWorldIcon(build.name, selectedWorld.folder, dataUrl)
     if (result?.success) await refreshWorlds()
     else showAlert(result?.error ?? t("worlds.errors.changeIcon"))
   }
 
-  const handleImportFile = (file: File) => {
-    const localPath = window.electronAPI?.getFilePath(file)
+  const handleImportFile = async (file: File) => {
+    const localPath = await window.electrobunAPI?.getFilePath(file)
     if (!localPath) {
       showAlert(t("worlds.errors.getFilePath"))
       return
@@ -405,52 +399,81 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     setNamePrompt({ mode: "import", initial, pendingFile: localPath })
   }
 
+  const runDatapackInstall = async (name: string, install: () => Promise<boolean>): Promise<boolean> => {
+    beginContentInstall({ title: t("worlds.datapack.installing"), message: t("builds.mod.downloading", { name }), itemName: name })
+    try {
+      const success = await install()
+      pushNotification({ kind: success ? "success" : "error", source: "install", title: t(success ? "worlds.datapack.installed" : "worlds.datapack.failed"), message: name })
+      return success
+    } catch (error) {
+      if (!isContentDownloadCancelled(error)) {
+        const message = error instanceof Error ? error.message : t("worlds.errors.datapackInstall")
+        pushNotification({ kind: "error", source: "install", title: t("worlds.datapack.failed"), message: `${name}: ${message}` })
+        showAlert(message)
+      }
+      return false
+    } finally { endContentInstall() }
+  }
+
   const handleInstallDatapackLocal = async (file: File) => {
-    if (!selectedWorld) return
-    const localPath = window.electronAPI?.getFilePath(file)
-    if (!localPath) {
-      showAlert(t("worlds.errors.getFilePath"))
-      return
-    }
-    const result = await window.electronAPI?.installDatapackLocal(build.name, selectedWorld.folder, localPath)
-    if (!result?.success) {
-      showAlert(result?.error ?? t("worlds.errors.datapackInstall"))
-      return
-    }
-    await refreshDatapacks(selectedWorld.folder)
+    if (!selectedWorld) return false
+    return runDatapackInstall(file.name, async () => {
+      const localPath = await window.electrobunAPI?.getFilePath(file)
+      if (!localPath) {
+        showAlert(t("worlds.errors.getFilePath"))
+        return false
+      }
+      const result = await window.electrobunAPI?.installDatapackLocal(build.name, selectedWorld.folder, localPath)
+      if (!result?.success) {
+        showAlert(result?.error ?? t("worlds.errors.datapackInstall"))
+        return false
+      }
+      await refreshDatapacks(selectedWorld.folder)
+      return true
+    })
   }
 
   const handleInstallDatapackRemote = async (mod: ModSearchResult) => {
-    if (!selectedWorld) return
+    if (!selectedWorld) return false
+    if (installing || findInstalledDatapack(datapacks, mod)) return false
     setInstalling(mod.id)
     try {
-      if (mod.source === "modrinth") {
-        const versions = await window.electronAPI?.modsModrinthVersions(mod.slug)
-        const version = versions?.find(v => v.files?.[0]?.url)
-        if (!version?.files?.[0]) {
-          showAlert(t("worlds.errors.datapackNoVersion"))
-          return
-        }
-        const file = version.files[0]
-        const result = await window.electronAPI?.installDatapackRemote(build.name, selectedWorld.folder, file.url, file.filename || `${mod.slug}.zip`)
-        if (!result?.success) showAlert(result?.error ?? t("worlds.errors.datapackDownload"))
-      } else if (mod.modId) {
-        const details = await window.electronAPI?.modsCurseforgeDetails(mod.modId)
-        const version = details?.versions?.find(v => Number(v.id) === mod.primaryFileId) ?? details?.versions?.[0]
-        if (!version) {
-          showAlert(t("worlds.errors.datapackNoVersion"))
-          return
-        }
-        const url = await window.electronAPI?.modsCurseforgeDownloadUrl(Number(version.id), mod.modId)
-        if (!url) {
-          showAlert(t("worlds.errors.downloadLink"))
-          return
-        }
-        const fileName = version.fileName || url.split("/").pop()?.split("?")[0] || `${mod.slug}.zip`
-        const result = await window.electronAPI?.installDatapackRemote(build.name, selectedWorld.folder, url, fileName)
-        if (!result?.success) showAlert(result?.error ?? t("worlds.errors.datapackDownload"))
-      }
-      await refreshDatapacks(selectedWorld.folder)
+      return await runDatapackInstall(mod.name, async () => {
+        if (mod.source === "modrinth") {
+          const versions = await window.electrobunAPI?.modsModrinthVersions(mod.slug)
+          const version = datapackVersions(versions ?? [], selectedWorld.mcVersion || build.version).find(v => v.downloadUrl)
+          if (!version?.downloadUrl) {
+            showAlert(t("worlds.errors.datapackNoVersion"))
+            return false
+          }
+          const result = await window.electrobunAPI?.installDatapackRemote(build.name, selectedWorld.folder, version.downloadUrl, version.fileName)
+          if (!result?.success) {
+            showAlert(result?.error ?? t("worlds.errors.datapackDownload"))
+            return false
+          }
+        } else if (mod.modId) {
+          const details = await window.electrobunAPI?.modsCurseforgeDetails(mod.modId)
+          const versions = datapackVersions(details?.versions ?? [], selectedWorld.mcVersion || build.version)
+          const version = versions.find(v => Number(v.id) === mod.primaryFileId) ?? versions[0]
+          if (!version) {
+            showAlert(t("worlds.errors.datapackNoVersion"))
+            return false
+          }
+          const url = await window.electrobunAPI?.modsCurseforgeDownloadUrl(Number(version.id), mod.modId)
+          if (!url) {
+            showAlert(t("worlds.errors.downloadLink"))
+            return false
+          }
+          const fileName = version.fileName || url.split("/").pop()?.split("?")[0] || `${mod.slug}.zip`
+          const result = await window.electrobunAPI?.installDatapackRemote(build.name, selectedWorld.folder, url, fileName)
+          if (!result?.success) {
+            showAlert(result?.error ?? t("worlds.errors.datapackDownload"))
+            return false
+          }
+        } else return false
+        await refreshDatapacks(selectedWorld.folder)
+        return true
+      })
     } finally {
       setInstalling(null)
     }
@@ -458,7 +481,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
 
   const handleDeleteDatapack = async (name: string) => {
     if (!selectedWorld) return
-    const result = await window.electronAPI?.deleteWorldDatapack(build.name, selectedWorld.folder, name)
+    const result = await window.electrobunAPI?.deleteWorldDatapack(build.name, selectedWorld.folder, name)
     if (!result?.success) {
       showAlert(result?.error ?? t("worlds.errors.datapackDelete"))
       return
@@ -470,13 +493,13 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
     setLoadingModal(true)
     try {
       const details = mod.source === "modrinth"
-        ? await window.electronAPI?.modsModrinthDetails(mod.slug)
+        ? await window.electrobunAPI?.modsModrinthDetails(mod.slug)
         : mod.modId
-          ? await window.electronAPI?.modsCurseforgeDetails(mod.modId)
+          ? await window.electrobunAPI?.modsCurseforgeDetails(mod.modId)
           : null
       if (details) {
         setSelectedDetails(details)
-        setDisplayedModalVersions(details.versions ?? [])
+        setDisplayedModalVersions(datapackVersions(details.versions ?? []))
         setModalTab("description")
       } else {
         showAlert(t("worlds.errors.datapackInfo"))
@@ -489,28 +512,40 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
   }
 
   const handleInstallDatapackVersion = async (version: ModVersion) => {
-    if (!selectedWorld) return
-    const url = version.downloadUrl || version.files?.[0]?.url
-    if (!url) {
-      showAlert(t("worlds.errors.noDownloadLink"))
-      return
-    }
-    const fileName = version.fileName || url.split("/").pop()?.split("?")[0] || "datapack.zip"
-    const result = await window.electronAPI?.installDatapackRemote(build.name, selectedWorld.folder, url, fileName)
-    if (!result?.success) {
-      showAlert(result?.error ?? t("worlds.errors.datapackDownload"))
-      return
-    }
-    await refreshDatapacks(selectedWorld.folder)
+    if (!selectedWorld) return false
+    return runDatapackInstall(selectedDetails?.name || version.name, async () => {
+      const file = datapackVersionFile(version)
+      if (!file) {
+        showAlert(t("worlds.errors.datapackNoVersion"))
+        return false
+      }
+      let url = file.downloadUrl
+      if (!url && selectedDetails?.source === "curseforge" && selectedDetails.modId) {
+        url = await window.electrobunAPI?.modsCurseforgeDownloadUrl(Number(version.id), selectedDetails.modId) ?? undefined
+      }
+      if (!url) {
+        showAlert(t("worlds.errors.noDownloadLink"))
+        return false
+      }
+      const fileName = file.fileName
+      const result = await window.electrobunAPI?.installDatapackRemote(build.name, selectedWorld.folder, url, fileName)
+      if (!result?.success) {
+        showAlert(result?.error ?? t("worlds.errors.datapackDownload"))
+        return false
+      }
+      await refreshDatapacks(selectedWorld.folder)
+      return true
+    })
   }
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
+    <div data-ui="instance-instance-worlds-tab-div-1" data-component="instance-worlds-tab" className={`flex-1 min-h-0 flex flex-col gap-3 overflow-hidden ${contentEnter ?? ""}`}>
       {/* Переключатель режимов */}
-      <div className="flex items-center justify-between border-b border-border pb-2.5 shrink-0 pr-1">
-        <div className="flex items-center gap-1.5 bg-muted/50 p-1 rounded-xl border border-border">
-          <button
+      <div data-ui="instance-instance-worlds-tab-div-2" className="flex items-center justify-between rounded-xl border border-border bg-card p-4 shrink-0">
+        <div data-ui="instance-instance-worlds-tab-div-3" className="flex items-center gap-1.5 bg-muted/50 p-1 rounded-xl border border-border">
+          <button data-ui="instance-instance-worlds-tab-button-1"
             type="button"
+            aria-pressed={viewMode === "installed"}
             onClick={() => setViewMode("installed")}
             className={cn(
               "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
@@ -520,15 +555,11 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
             )}
           >
             <IconMap className="h-3.5 w-3.5" />
-            <span>{t("worlds.tabs.installed")}</span>
-            {worlds && (
-              <span className="rounded-full bg-muted px-1.5 py-0.2 text-[10px] text-muted-foreground">
-                {worlds.length}
-              </span>
-            )}
+            <span data-ui="instance-instance-worlds-tab-span-1">{t("worlds.tabs.installed")}</span>
           </button>
-          <button
+          <button data-ui="instance-instance-worlds-tab-button-2"
             type="button"
+            aria-pressed={viewMode === "catalog"}
             onClick={() => setViewMode("catalog")}
             className={cn(
               "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
@@ -538,39 +569,20 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
             )}
           >
             <IconMap className="h-3.5 w-3.5 text-primary" />
-            <span>{t("worlds.tabs.catalog")}</span>
+            <span data-ui="instance-instance-worlds-tab-span-3">{t("worlds.tabs.catalog")}</span>
           </button>
         </div>
 
-        {viewMode === "installed" && worlds && worlds.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => worldZipInputRef.current?.click()}
-              className="flex items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <IconUpload className="h-3.5 w-3.5" strokeWidth={1.75} />
-              {t("worlds.import_zip")}
-            </button>
-            <button
-              type="button"
-              onClick={() => void refreshWorlds()}
-              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <IconRefresh className={cn("h-3.5 w-3.5", loading && "animate-spin")} strokeWidth={1.75} />
-              {t("worlds.refresh")}
-            </button>
-          </div>
-        )}
+
       </div>
 
       {viewMode === "catalog" ? (
-        <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
+        <div data-ui="instance-instance-worlds-tab-div-5" className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
           {/* Тулбар поиска и фильтров */}
-          <div className="shrink-0 flex flex-wrap items-center justify-between gap-2.5 pr-2">
-            <div className="relative flex-1 min-w-[240px]">
+          <div data-ui="instance-instance-worlds-tab-div-6" className="shrink-0 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-border bg-card p-4">
+            <div data-ui="instance-instance-worlds-tab-div-7" className="relative flex-1 min-w-[240px]">
               <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
+              <input data-ui="instance-instance-worlds-tab-input-1"
                 type="text"
                 value={mapSearch}
                 onChange={e => { setMapSearch(e.target.value); setMapPage(1) }}
@@ -578,13 +590,13 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                 className="w-full pl-9 pr-4 py-2 rounded-xl bg-muted/50 border border-border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary"
               />
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none bg-muted/40 hover:bg-muted/70 px-3 py-2 rounded-xl border border-border transition-colors h-9">
+            <div data-ui="instance-instance-worlds-tab-div-8" className="flex flex-wrap items-center gap-2">
+              <label data-ui="instance-instance-worlds-tab-label-1" className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none bg-muted/40 hover:bg-muted/70 px-3 py-2 rounded-xl border border-border transition-colors h-9">
                 <Checkbox
                   checked={filterBuildVersion}
                   onCheckedChange={(checked) => { setFilterBuildVersion(!!checked); setMapPage(1) }}
                 />
-                <span>{t("worlds.only_current_version", { version: build.version })}</span>
+                <span data-ui="instance-instance-worlds-tab-span-4">{t("worlds.only_current_version", { version: build.version })}</span>
               </label>
 
               {/* Категории карт через модальное окно с чекбоксами */}
@@ -593,7 +605,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                 setMapCatDialogOpen(open)
               }}>
                 <DialogTrigger asChild>
-                  <button
+                  <button data-ui="instance-instance-worlds-tab-button-5"
                     type="button"
                     className={cn(
                       "flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-colors h-9",
@@ -603,12 +615,13 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                     )}
                   >
                     <IconList className="w-4 h-4" strokeWidth={1.75} />
-                    <span>{selectedMapCategories.length > 0 ? t("servers.addons.categoriesCount", { count: selectedMapCategories.length }) : t("servers.addons.categories")}</span>
+                    <span data-ui="instance-instance-worlds-tab-span-5">{selectedMapCategories.length > 0 ? t("servers.addons.categoriesCount", { count: selectedMapCategories.length }) : t("servers.addons.categories")}</span>
                   </button>
                 </DialogTrigger>
-                <DialogContent className="max-w-sm p-6 bg-card border border-border shadow-2xl rounded-3xl flex flex-col max-h-[75vh]">
+                <DialogContent data-window="instance-instance-worlds-tab-window-1" className="max-w-sm p-6 bg-card border border-border shadow-2xl rounded-3xl flex flex-col max-h-[75vh]">
                   <DialogHeader className="text-left">
-                    <DialogTitle className="text-lg font-bold text-foreground">
+                    <DialogTitle className="flex items-center gap-2 text-lg font-bold text-foreground">
+                      <ModalTitleIcon><IconMap className="h-4 w-4" strokeWidth={1.75} /></ModalTitleIcon>
                       {t("worlds.ui.categoriesTitle")}
                     </DialogTitle>
                     <DialogDescription className="text-xs text-muted-foreground mt-0.5">
@@ -616,15 +629,15 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                     </DialogDescription>
                   </DialogHeader>
 
-                  <div className="flex flex-col gap-1 overflow-y-auto flex-1 my-3 pr-1">
+                  <div data-ui="instance-instance-worlds-tab-div-9" className="flex flex-col gap-1 overflow-y-auto flex-1 my-3 pr-1">
                     {mapCategoriesLoading && mapCategories.length === 0 && (
-                      <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
+                      <div data-ui="instance-instance-worlds-tab-div-10" className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
                         <IconLoader2 className="w-4 h-4 animate-spin" />
-                        <span>{t("worlds.ui.categoriesLoading")}</span>
+                        <span data-ui="instance-instance-worlds-tab-span-6">{t("worlds.ui.categoriesLoading")}</span>
                       </div>
                     )}
                     {!mapCategoriesLoading && mapCategories.length === 0 && (
-                      <div className="px-3 py-4 text-xs text-muted-foreground">
+                      <div data-ui="instance-instance-worlds-tab-div-11" className="px-3 py-4 text-xs text-muted-foreground">
                         {t("worlds.ui.categoriesError")}
                       </div>
                     )}
@@ -634,7 +647,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                       const hasImg = !!cat.icon && !hasSvg && cat.icon.startsWith("http")
 
                       return (
-                        <label
+                        <label data-ui="instance-instance-worlds-tab-label-2"
                           key={cat.slug}
                           className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-muted/50 cursor-pointer text-sm text-foreground transition-colors"
                         >
@@ -649,18 +662,18 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                             }}
                           />
                           {hasSvg && (
-                            <span
+                            <span data-ui="instance-instance-worlds-tab-span-7"
                               className="w-4 h-4 shrink-0 text-muted-foreground [&_svg]:w-full [&_svg]:h-full"
                               dangerouslySetInnerHTML={{ __html: cat.icon }}
                             />
                           )}
                           {hasImg && (
-                            <img src={cat.icon} alt="" className="w-4 h-4 shrink-0 rounded-sm object-contain" />
+                            <img data-ui="instance-instance-worlds-tab-img-1" src={cat.icon} alt="" className="w-4 h-4 shrink-0 rounded-sm object-contain" />
                           )}
                           {!hasSvg && !hasImg && <IconMap className="w-4 h-4 shrink-0 text-muted-foreground" />}
-                          <span className="flex-1 font-medium text-xs">{cat.name}</span>
+                          <span data-ui="instance-instance-worlds-tab-span-8" className="flex-1 font-medium text-xs">{cat.name}</span>
                           {cat.header !== "categories" && (
-                            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{cat.header}</span>
+                            <span data-ui="instance-instance-worlds-tab-span-9" className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{cat.header}</span>
                           )}
                         </label>
                       )
@@ -668,7 +681,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                   </div>
 
                   {draftMapCategories.length > 0 && (
-                    <button
+                    <button data-ui="instance-instance-worlds-tab-button-6"
                       type="button"
                       onClick={() => setDraftMapCategories([])}
                       className="text-xs text-muted-foreground hover:text-foreground transition-colors mb-2 text-left"
@@ -677,15 +690,15 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                     </button>
                   )}
 
-                  <div className="flex gap-2 pt-2 border-t border-border/50">
-                    <button
+                  <div data-ui="instance-instance-worlds-tab-div-12" className="flex gap-2 pt-2 border-t border-border/50">
+                    <button data-ui="instance-instance-worlds-tab-button-7"
                       type="button"
                       onClick={() => setMapCatDialogOpen(false)}
                       className="flex-1 px-4 py-2 rounded-xl text-xs font-medium bg-muted hover:bg-muted/80 text-muted-foreground transition-colors"
                     >
-                      {t("common.cancel")}
+                      {<span className="inline-flex items-center justify-center gap-2"><LauncherCancelIcon className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />{t("common.cancel")}</span>}
                     </button>
-                    <button
+                    <button data-ui="instance-instance-worlds-tab-button-8"
                       type="button"
                       onClick={() => {
                         setSelectedMapCategories(draftMapCategories)
@@ -716,17 +729,17 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
           </div>
 
           {/* Область списка карт со своим скроллом */}
-          <div className="flex-1 min-h-0 overflow-y-auto pr-2 pb-3">
+          <div data-ui="instance-instance-worlds-tab-div-13" className="flex-1 min-h-0 overflow-y-auto pr-2 pb-3">
             {mapLoading ? (
-              <div className="flex h-64 items-center justify-center text-muted-foreground">
+              <div data-ui="instance-instance-worlds-tab-div-14" className="flex min-h-full items-center justify-center text-muted-foreground">
                 <IconLoader2 className="h-6 w-6 animate-spin text-primary" />
               </div>
             ) : mapResults.length === 0 ? (
-              <div className="flex h-64 flex-col items-center justify-center gap-2 text-center">
-                <IconMap className="h-8 w-8 text-muted-foreground/40" />
-                <p className="text-sm text-muted-foreground">{t("worlds.no_maps_found")}</p>
+              <div data-ui="instance-instance-worlds-tab-div-15" className="flex h-64 flex-col items-center justify-center gap-2 text-center">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary mb-2"><IconMap className="h-8 w-8" strokeWidth={1.75} aria-hidden="true" /></div>
+                <p data-ui="instance-instance-worlds-tab-p-1" className="text-sm text-muted-foreground">{t("worlds.no_maps_found")}</p>
                 {filterBuildVersion && (
-                  <button
+                  <button data-ui="instance-instance-worlds-tab-button-9"
                     type="button"
                     onClick={() => setFilterBuildVersion(false)}
                     className="mt-1 text-xs text-primary hover:underline"
@@ -736,7 +749,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                 )}
               </div>
             ) : (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div data-ui="instance-instance-worlds-tab-div-16" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {mapResults.map(map => {
                   const isInstalling = installingMapId === map.id
                   const isInstalled = installedMapIds.has(map.id) || (worlds?.some(w => w.name.toLowerCase() === map.name.toLowerCase()) ?? false)
@@ -746,32 +759,32 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                     : null
 
                   return (
-                    <div
+                    <div data-ui="instance-instance-worlds-tab-div-17"
                       key={map.id}
                       className={cn(
                         "group flex flex-col justify-between rounded-2xl border border-border bg-card p-3.5 transition-colors hover:border-primary/50",
                         isInstalling && "border-primary/50 bg-primary/5",
                       )}
                     >
-                      <div>
-                        <div className="flex items-start gap-3">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted border border-border">
+                      <div data-ui="instance-instance-worlds-tab-div-18">
+                        <div data-ui="instance-instance-worlds-tab-div-19" className="flex items-start gap-3">
+                          <div data-ui="instance-instance-worlds-tab-div-20" className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted border border-border">
                             {map.iconUrl ? (
-                              <img src={map.iconUrl} alt="" className="h-full w-full object-cover" />
+                              <img data-ui="instance-instance-worlds-tab-img-2" src={map.iconUrl} alt="" className="h-full w-full object-cover" />
                             ) : (
                               <IconMap className="h-6 w-6 text-muted-foreground/50" />
                             )}
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <h4 className="font-semibold text-foreground text-sm truncate group-hover:text-primary transition-colors">
+                          <div data-ui="instance-instance-worlds-tab-div-21" className="min-w-0 flex-1">
+                            <h4 data-ui="instance-instance-worlds-tab-h4-1" className="font-semibold text-foreground text-sm truncate group-hover:text-primary transition-colors">
                               {map.name}
                             </h4>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                              <span>{t("worlds.download_count", { count: formatDownloads(map.downloadCount) })}</span>
-                              {map.author && <span>· {map.author}</span>}
+                            <div data-ui="instance-instance-worlds-tab-div-22" className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                              <span data-ui="instance-instance-worlds-tab-span-10">{t("worlds.download_count", { count: formatDownloads(map.downloadCount) })}</span>
+                              {map.author && <span data-ui="instance-instance-worlds-tab-span-11">· {map.author}</span>}
                             </div>
                             {map.categories && map.categories.length > 0 && (
-                              <div className="flex flex-wrap gap-1 mt-1.5">
+                              <div data-ui="instance-instance-worlds-tab-div-23" className="flex flex-wrap gap-1 mt-1.5">
                                 {map.categories.slice(0, 3).map(cat => (
                                   <CategoryBadge key={cat} name={cat} source="curseforge" className="px-1.5 py-0 text-[10px]" />
                                 ))}
@@ -781,15 +794,15 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                         </div>
 
                         {map.summary && (
-                          <p className="text-xs text-muted-foreground line-clamp-2 mt-2 leading-relaxed">
+                          <p data-ui="instance-instance-worlds-tab-p-2" className="text-xs text-muted-foreground line-clamp-2 mt-2 leading-relaxed">
                             {map.summary}
                           </p>
                         )}
                       </div>
 
-                      <div className="mt-3 pt-3 border-t border-border/60">
-                        <div className="flex items-center justify-between gap-2">
-                          <button
+                      <div data-ui="instance-instance-worlds-tab-div-24" className="mt-3 pt-3 border-t border-border/60">
+                        <div data-ui="instance-instance-worlds-tab-div-25" className="flex items-center justify-between gap-2">
+                          <button data-ui="instance-instance-worlds-tab-button-10"
                             type="button"
                             onClick={() => void openMapDetails(map)}
                             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-muted"
@@ -799,12 +812,12 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                           </button>
 
                           {isInstalled && !isInstalling ? (
-                            <span className="flex items-center gap-1 text-xs font-medium text-primary px-3 py-1.5 rounded-lg bg-primary/10">
+                            <span data-ui="instance-instance-worlds-tab-span-12" className="flex items-center gap-1 text-xs font-medium text-primary px-3 py-1.5 rounded-lg bg-primary/10">
                               <IconCheck className="h-3.5 w-3.5" />
                               {t("worlds.installed")}
                             </span>
                           ) : (
-                            <button
+                            <button data-ui="instance-instance-worlds-tab-button-11"
                               type="button"
                               disabled={isInstalling || installingMapId !== null}
                               onClick={() => void handleDownloadMap(map)}
@@ -813,12 +826,12 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                               {isInstalling ? (
                                 <>
                                   <IconLoader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                                  <span>{percent !== null ? `${percent}%` : t("worlds.downloading")}</span>
+                                  <span data-ui="instance-instance-worlds-tab-span-13">{percent !== null ? `${percent}%` : t("worlds.downloading")}</span>
                                 </>
                               ) : (
                                 <>
                                   <IconDownload className="h-3.5 w-3.5" strokeWidth={1.75} />
-                                  <span>{t("worlds.download")}</span>
+                                  <span data-ui="instance-instance-worlds-tab-span-14">{t("worlds.download")}</span>
                                 </>
                               )}
                             </button>
@@ -826,19 +839,19 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                         </div>
 
                         {isInstalling && (
-                          <div className="mt-2.5">
-                            <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                              <span className="truncate">
+                          <div data-ui="instance-instance-worlds-tab-div-26" className="mt-2.5">
+                            <div data-ui="instance-instance-worlds-tab-div-27" className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                              <span data-ui="instance-instance-worlds-tab-span-15" className="truncate">
                                 {progress?.fileName ? t("worlds.downloading") : t("worlds.extracting")}
                               </span>
-                              <span className="shrink-0 font-mono tabular-nums">
+                              <span data-ui="instance-instance-worlds-tab-span-16" className="shrink-0 font-mono tabular-nums">
                                 {percent !== null ? `${percent}%` : ""}
                               </span>
                             </div>
-                            <div className={cn("h-1.5 w-full rounded-full bg-muted", percent === null && "progress-indeterminate")}>
+                            <div data-ui="instance-instance-worlds-tab-div-28" className={cn("h-1.5 w-full rounded-full bg-muted", percent === null && "progress-indeterminate")}>
                               {/* Размер архива ещё неизвестен — полоса бежит; с байтами заполняется. */}
                               {percent !== null && (
-                                <div
+                                <div data-ui="instance-instance-worlds-tab-div-29"
                                   className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
                                   style={{ width: `${Math.max(2, percent)}%` }}
                                 />
@@ -864,22 +877,22 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
           </div>
         </div>
       ) : worlds === null ? (
-        <div className="flex h-full items-center justify-center text-muted-foreground py-20">
+        <div data-ui="instance-instance-worlds-tab-div-30" className="flex h-full items-center justify-center text-muted-foreground py-20">
           <IconLoader2 className="h-6 w-6 animate-spin text-primary" />
         </div>
       ) : worlds.length === 0 ? (
-        <div className="flex h-full flex-col items-center justify-center gap-4 text-center max-w-md mx-auto py-12">
-          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10 text-primary border border-primary/20">
+        <div data-ui="instance-instance-worlds-tab-div-31" className="flex h-full flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card px-4 py-12 text-center">
+          <div data-ui="instance-instance-worlds-tab-div-32" className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10 text-primary border border-primary/20">
             <IconMap className="h-10 w-10" strokeWidth={1.75} />
           </div>
-          <div>
-            <div className="text-xl font-bold text-foreground">{t("worlds.empty_title")}</div>
-            <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
+          <div data-ui="instance-instance-worlds-tab-div-33">
+            <div data-ui="instance-instance-worlds-tab-div-34" className="text-xl font-bold text-foreground">{t("worlds.empty_title")}</div>
+            <p data-ui="instance-instance-worlds-tab-p-3" className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
               {t("worlds.empty_description")}
             </p>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-2.5 mt-2">
-            <button
+          <div data-ui="instance-instance-worlds-tab-div-35" className="flex flex-wrap items-center justify-center gap-2.5 mt-2">
+            <button data-ui="instance-instance-worlds-tab-button-12"
               type="button"
               onClick={() => setViewMode("catalog")}
               className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm"
@@ -887,7 +900,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
               <IconMap className="h-4 w-4" strokeWidth={2} />
               {t("worlds.open_catalog")}
             </button>
-            <button
+            <button data-ui="instance-instance-worlds-tab-button-13"
               type="button"
               onClick={() => worldZipInputRef.current?.click()}
               className="flex items-center gap-2 rounded-xl border border-border bg-muted/60 px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
@@ -898,31 +911,31 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
           </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto pr-2 pb-3">
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        <div data-ui="instance-instance-worlds-tab-div-36" className="flex-1 min-h-0 overflow-y-auto pr-2 pb-3">
+          <div data-ui="instance-instance-worlds-tab-div-37" className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
           {/* World list */}
-          <div>
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold text-foreground">{t("worlds.ui.title", { count: worlds.length })}</div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => worldZipInputRef.current?.click()}
-                  className="flex items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  <IconUpload className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  {t("worlds.import_zip")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void refreshWorlds()}
-                  className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  <IconRefresh className={cn("h-3.5 w-3.5", loading && "animate-spin")} strokeWidth={1.75} />
-                  {t("common.refresh")}
-                </button>
-              </div>
-              <input
+          <div data-ui="instance-instance-worlds-tab-div-38">
+            <div data-ui="instance-instance-worlds-tab-div-39" className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-border bg-card p-4">
+              <div data-ui="instance-instance-worlds-tab-div-40" className="flex items-center gap-2 text-sm font-semibold text-foreground"><IconMap className="h-4 w-4 shrink-0 text-primary" strokeWidth={1.75} aria-hidden="true" />{t("worlds.tabs.installed")}</div>
+          <div data-ui="instance-instance-worlds-tab-div-41" className="flex items-center gap-1.5">
+            <button data-ui="instance-instance-worlds-tab-button-14"
+              type="button"
+              onClick={() => worldZipInputRef.current?.click()}
+              className="flex items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <IconUpload className="h-3.5 w-3.5" strokeWidth={1.75} />
+              {t("worlds.import_zip")}
+            </button>
+            <button data-ui="instance-instance-worlds-tab-button-15"
+              type="button"
+              onClick={() => void refreshWorlds()}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {loading ? <IconLoader2 className="h-3.5 w-3.5 text-primary animate-spin" strokeWidth={1.75} /> : <IconRefresh className="h-3.5 w-3.5" strokeWidth={1.75} />}
+              {t("worlds.refresh")}
+            </button>
+          </div>
+              <input data-ui="instance-instance-worlds-tab-input-2"
                 ref={worldZipInputRef}
                 type="file"
                 accept=".zip"
@@ -930,13 +943,13 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                 onChange={e => {
                   const file = e.target.files?.[0]
                   if (file) void handleImportFile(file)
-                  e.target.value = ""
+                  e.currentTarget.value = ""
                 }}
               />
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div data-ui="instance-instance-worlds-tab-div-42" className="grid gap-3 sm:grid-cols-2">
               {worlds.map(world => (
-                <button
+                <button data-ui="instance-instance-worlds-tab-button-16"
                   key={world.folder}
                   type="button"
                   onClick={() => setSelectedFolder(world.folder)}
@@ -947,24 +960,24 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                       : "border-border bg-card/60 hover:border-primary/40 hover:bg-muted/40"
                   )}
                 >
-                  <div className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl border border-border bg-muted/50">
+                  <div data-ui="instance-instance-worlds-tab-div-43" className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl border border-border bg-muted/50">
                     {world.iconDataUrl ? (
-                      <img src={world.iconDataUrl} alt="" className="h-full w-full object-cover" />
+                      <img data-ui="instance-instance-worlds-tab-img-3" src={world.iconDataUrl} alt="" className="h-full w-full object-cover" />
                     ) : (
-                      <div className="flex h-full w-full items-center justify-center">
+                      <div data-ui="instance-instance-worlds-tab-div-44" className="flex h-full w-full items-center justify-center">
                         <IconMap className="h-6 w-6 text-muted-foreground/40" strokeWidth={1.5} />
                       </div>
                     )}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-foreground">{world.name}</div>
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                  <div data-ui="instance-instance-worlds-tab-div-45" className="min-w-0 flex-1">
+                    <div data-ui="instance-instance-worlds-tab-div-46" className="truncate text-sm font-semibold text-foreground">{world.name}</div>
+                    <div data-ui="instance-instance-worlds-tab-div-47" className="mt-0.5 truncate text-xs text-muted-foreground">
                       {world.gameMode}
                       {world.hardcore ? t("worlds.ui.hardcore") : ""}
                       {world.mcVersion ? ` · ${world.mcVersion}` : ""}
                     </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground/70">
-                      <span>{t("worlds.ui.playedOn", { date: formatDateTime(world.lastPlayed) })}</span>
+                    <div data-ui="instance-instance-worlds-tab-div-48" className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground/70">
+                      <span data-ui="instance-instance-worlds-tab-span-17">{t("worlds.ui.playedOn", { date: formatDateTime(world.lastPlayed) })}</span>
                     </div>
                   </div>
                 </button>
@@ -974,17 +987,17 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
 
           {/* Selected world detail */}
           {selectedWorld && (
-            <div className="rounded-3xl border border-border bg-card/40 p-5">
-              <div className="flex items-start gap-4">
-                <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl border border-border bg-muted/50">
+            <div data-ui="instance-instance-worlds-tab-div-49" className="rounded-3xl border border-border bg-card/40 p-5">
+              <div data-ui="instance-instance-worlds-tab-div-50" className="flex items-start gap-4">
+                <div data-ui="instance-instance-worlds-tab-div-51" className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-2xl border border-border bg-muted/50">
                   {selectedWorld.iconDataUrl ? (
-                    <img src={selectedWorld.iconDataUrl} alt="" className="h-full w-full object-cover" />
+                    <img data-ui="instance-instance-worlds-tab-img-4" src={selectedWorld.iconDataUrl} alt="" className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center">
+                    <div data-ui="instance-instance-worlds-tab-div-52" className="flex h-full w-full items-center justify-center">
                       <IconMap className="h-8 w-8 text-muted-foreground/40" strokeWidth={1.5} />
                     </div>
                   )}
-                  <button
+                  <button data-ui="instance-instance-worlds-tab-button-17"
                     type="button"
                     onClick={() => void handleResetIcon()}
                     title={t("worlds.ui.resetIcon")}
@@ -992,7 +1005,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                   >
                     <IconX className="h-3.5 w-3.5" strokeWidth={1.75} />
                   </button>
-                  <button
+                  <button data-ui="instance-instance-worlds-tab-button-18"
                     type="button"
                     onClick={() => iconInputRef.current?.click()}
                     title={t("worlds.ui.changeIcon")}
@@ -1000,7 +1013,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                   >
                     <IconPhoto className="h-3.5 w-3.5" strokeWidth={1.75} />
                   </button>
-                  <input
+                  <input data-ui="instance-instance-worlds-tab-input-3"
                     ref={iconInputRef}
                     type="file"
                     accept="image/*"
@@ -1012,8 +1025,8 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                     }}
                   />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <input
+                <div data-ui="instance-instance-worlds-tab-div-53" className="min-w-0 flex-1">
+                  <input data-ui="instance-instance-worlds-tab-input-4"
                     value={nameDraft}
                     onChange={e => setNameDraft(e.target.value)}
                     onBlur={() => void handleRenameInline(nameDraft)}
@@ -1033,21 +1046,21 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                       renaming && "opacity-60"
                     )}
                   />
-                  <div className="mt-0.5 text-sm text-muted-foreground">
+                  <div data-ui="instance-instance-worlds-tab-div-54" className="mt-0.5 text-sm text-muted-foreground">
                     {selectedWorld.gameMode}
                     {selectedWorld.hardcore ? t("worlds.ui.hardcore") : ""}
                     {selectedWorld.mcVersion ? ` · ${selectedWorld.mcVersion}` : ""}
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
+                  <div data-ui="instance-instance-worlds-tab-div-55" className="mt-2 flex flex-wrap gap-2">
+                    <button data-ui="instance-instance-worlds-tab-button-19"
                       type="button"
-                      onClick={() => window.electronAPI?.openPath(selectedWorld.path)}
+                      onClick={() => window.electrobunAPI?.openPath(selectedWorld.path)}
                       className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
                     >
-                      <IconFolderOpen className="h-3.5 w-3.5" strokeWidth={1.75} />
+                      <IconFolder className="h-3.5 w-3.5" strokeWidth={1.75} />
                       {t("worlds.ui.folder")}
                     </button>
-                    <button
+                    <button data-ui="instance-instance-worlds-tab-button-20"
                       type="button"
                       onClick={() => { const n = `${selectedWorld.name} ${t("worlds.ui.copySuffix")}`; setPromptValue(n); setNamePrompt({ mode: "copy", initial: n }) }}
                       className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
@@ -1055,7 +1068,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                       <IconCopy className="h-3.5 w-3.5" strokeWidth={1.75} />
                       {t("worlds.ui.copy")}
                     </button>
-                    <button
+                    <button data-ui="instance-instance-worlds-tab-button-21"
                       type="button"
                       onClick={() => setDeleteOpen(true)}
                       className="flex items-center gap-1.5 rounded-xl bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
@@ -1067,15 +1080,15 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-3 rounded-2xl border border-border/70 bg-muted/20 p-4 sm:grid-cols-3">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("worlds.ui.seed")}</div>
-                  <div className="mt-1 flex items-center gap-1.5">
-                    <span className="max-w-[120px] truncate text-sm font-medium text-foreground" title={selectedWorld.seed || t("worlds.ui.seedUnknown")}>
+              <div data-ui="instance-instance-worlds-tab-div-56" className="mt-4 grid grid-cols-2 gap-3 rounded-2xl border border-border/70 bg-muted/20 p-4 sm:grid-cols-3">
+                <div data-ui="instance-instance-worlds-tab-div-57">
+                  <div data-ui="instance-instance-worlds-tab-div-58" className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("worlds.ui.seed")}</div>
+                  <div data-ui="instance-instance-worlds-tab-div-59" className="mt-1 flex items-center gap-1.5">
+                    <span data-ui="instance-instance-worlds-tab-span-18" className="max-w-[120px] truncate text-sm font-medium text-foreground" title={selectedWorld.seed || t("worlds.ui.seedUnknown")}>
                       {selectedWorld.seed || "—"}
                     </span>
                     {selectedWorld.seed && (
-                      <button
+                      <button data-ui="instance-instance-worlds-tab-button-22"
                         type="button"
                         onClick={() => copyToClipboard(selectedWorld.seed)}
                         title={t("worlds.ui.copySeed")}
@@ -1086,28 +1099,28 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                     )}
                   </div>
                 </div>
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("buildDetail.played")}</div>
-                  <div className="mt-1 text-sm font-medium text-foreground">{formatPlaytime(selectedWorld.playedTime)}</div>
+                <div data-ui="instance-instance-worlds-tab-div-60">
+                  <div data-ui="instance-instance-worlds-tab-div-61" className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("buildDetail.played")}</div>
+                  <div data-ui="instance-instance-worlds-tab-div-62" className="mt-1 text-sm font-medium text-foreground">{formatPlaytime(selectedWorld.playedTime)}</div>
                 </div>
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("worlds.ui.size")}</div>
-                  <div className="mt-1 text-sm font-medium text-foreground">{formatBytes(selectedWorld.sizeBytes)}</div>
+                <div data-ui="instance-instance-worlds-tab-div-63">
+                  <div data-ui="instance-instance-worlds-tab-div-64" className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("worlds.ui.size")}</div>
+                  <div data-ui="instance-instance-worlds-tab-div-65" className="mt-1 text-sm font-medium text-foreground">{formatBytes(selectedWorld.sizeBytes)}</div>
                 </div>
-                <div className="col-span-2 sm:col-span-3">
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("worlds.ui.lastPlayed")}</div>
-                  <div className="mt-1 text-sm font-medium text-foreground">{formatDateTime(selectedWorld.lastPlayed)}</div>
+                <div data-ui="instance-instance-worlds-tab-div-66" className="col-span-2 sm:col-span-3">
+                  <div data-ui="instance-instance-worlds-tab-div-67" className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("worlds.ui.lastPlayed")}</div>
+                  <div data-ui="instance-instance-worlds-tab-div-68" className="mt-1 text-sm font-medium text-foreground">{formatDateTime(selectedWorld.lastPlayed)}</div>
                 </div>
               </div>
 
               {/* Datapacks */}
-              <div className="mt-5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                    <IconArchive className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
+              <div data-ui="instance-instance-worlds-tab-div-69" className="mt-5">
+                <div data-ui="instance-instance-worlds-tab-div-70" className="flex items-center justify-between">
+                  <div data-ui="instance-instance-worlds-tab-div-71" className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <IconArchive className="h-4 w-4 text-primary" strokeWidth={1.75} />
                     {t("worlds.ui.datapacks", { count: datapacks.length })}
                   </div>
-                  <button
+                  <button data-ui="instance-instance-worlds-tab-button-23"
                     type="button"
                     onClick={() => datapackInputRef.current?.click()}
                     className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
@@ -1115,7 +1128,7 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                     <IconUpload className="h-3.5 w-3.5" strokeWidth={1.75} />
                     {t("worlds.ui.uploadFile")}
                   </button>
-                  <input
+                  <input data-ui="instance-instance-worlds-tab-input-5"
                     ref={datapackInputRef}
                     type="file"
                     accept=".zip,.mcpack,.datapack"
@@ -1129,15 +1142,21 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                 </div>
 
                 {datapacks.length > 0 && (
-                  <div className="mt-3 space-y-2">
+                  <div data-ui="instance-instance-worlds-tab-div-72" className="mt-3 space-y-2">
                     {datapacks.map(dp => (
-                      <div key={dp.name} className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
-                        <IconArchive className="h-4 w-4 flex-shrink-0 text-muted-foreground" strokeWidth={1.75} />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm text-foreground">{dp.name}</div>
-                          <div className="text-[11px] text-muted-foreground">{formatBytes(dp.sizeBytes)}</div>
+                      <div data-ui="instance-instance-worlds-tab-div-73" key={dp.name} className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
+                        <div className="relative flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted/40">
+                          <IconArchive className="h-5 w-5 text-primary" strokeWidth={1.75} />
+                          {dp.iconUrl && <img key={dp.iconUrl} src={dp.iconUrl} alt="" className="absolute inset-0 h-full w-full bg-muted object-contain" loading="lazy" onError={event => { event.currentTarget.style.display = "none" }} />}
                         </div>
-                        <button
+                        <div data-ui="instance-instance-worlds-tab-div-74" className="min-w-0 flex-1">
+                          <div data-ui="instance-instance-worlds-tab-div-75" className="truncate text-sm text-foreground" title={dp.name}>{dp.displayName || dp.name}</div>
+                          {dp.author && <div className="truncate text-xs text-muted-foreground">{dp.author}</div>}
+                          {dp.description && <div className="truncate text-xs text-muted-foreground">{dp.description}</div>}
+                          {dp.parseError && <div className="truncate text-xs text-muted-foreground">{t("worlds.errors.datapackInfo")}</div>}
+                          <div data-ui="instance-instance-worlds-tab-div-76" className="text-[11px] text-muted-foreground">{formatBytes(dp.sizeBytes)}</div>
+                        </div>
+                        <button data-ui="instance-instance-worlds-tab-button-24"
                           type="button"
                           onClick={() => void handleDeleteDatapack(dp.name)}
                           className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
@@ -1151,11 +1170,11 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                 )}
 
                 {/* Search datapacks on Modrinth / CurseForge */}
-                <div className="mt-4 rounded-2xl border border-border/70 bg-muted/15 p-3">
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
+                <div data-ui="instance-instance-worlds-tab-div-77" className="mt-4 rounded-2xl border border-border/70 bg-muted/15 p-3">
+                  <div data-ui="instance-instance-worlds-tab-div-78" className="flex items-center gap-2">
+                    <div data-ui="instance-instance-worlds-tab-div-79" className="relative flex-1">
                       <IconSearch className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/60" strokeWidth={1.75} />
-                      <input
+                      <input data-ui="instance-instance-worlds-tab-input-6"
                         type="text"
                         value={search}
                         onChange={e => setSearch(e.target.value)}
@@ -1163,32 +1182,33 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                         className="h-10 w-full rounded-xl border border-border bg-muted/40 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary"
                       />
                     </div>
-                    <div className="flex rounded-xl bg-muted/50 p-1">
+                    <div data-ui="instance-instance-worlds-tab-div-80" className="flex rounded-xl bg-muted/50 p-1">
                       {(["modrinth", "curseforge"] as Source[]).map(src => (
-                        <button
+                        <button data-ui="instance-instance-worlds-tab-button-25"
                           key={src}
                           type="button"
+                          aria-pressed={source === src}
                           onClick={() => setSource(src)}
                            className={cn(
                             "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
                             source === src
-                              ? src === "modrinth" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"
-                              : "bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
+                              ? src === "modrinth" ? "bg-success/20 text-success" : "bg-primary/20 text-primary"
+                              : "text-muted-foreground hover:text-foreground hover:bg-muted"
                           )}
                         >
                           {src === "modrinth" ? (
                             <>
-                              <svg className="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                                <path fill="currentColor" d="M12.252.004a11.78 11.768 0 0 0-8.92 3.73a11 11 0 0 0-2.17 3.11a11.37 11.359 0 0 0-1.16 5.169c0 1.42.17 2.5.6 3.77c.24.759.77 1.899 1.17 2.529a12.3 12.298 0 0 0 8.85 5.639c.44.05 2.54.07 2.76.02c.2-.04.22.1-.26-1.7l-.36-1.37l-1.01-.06a8.5 8.489 0 0 1-5.18-1.8a5.3 5.3 0 0 1-1.3-1.26c0-.05.34-.28.74-.5a37.572 37.545 0 0 1 2.88-1.629c.03 0 .5.45 1.06.98l1 .97l2.07-.43l2.06-.43l1.47-1.47c.8-.8 1.48-1.5 1.48-1.52c0-.09-.42-1.63-.46-1.7c-.04-.06-.2-.03-1.02.18c-.53.13-1.2.3-1.45.4l-.48.15l-.53.53l-.53.53l-.93.1l-.93.07l-.52-.5a2.7 2.7 0 0 1-.96-1.7l-.13-.6l.43-.57c.68-.9.68-.9 1.46-1.1c.4-.1.65-.2.83-.33c.13-.099.65-.579 1.14-1.069l.9-.9l-.7-.7l-.7-.7l-1.95.54c-1.07.3-1.96.53-1.97.53c-.03 0-2.23 2.48-2.63 2.97l-.29.35l.28 1.03c.16.56.3 1.16.31 1.34l.03.3l-.34.23c-.37.23-2.22 1.3-2.84 1.63-.36.2-.37.2-.44.1c-.08-.1-.23-.6-.32-1.03c-.18-.86-.17-2.75.02-3.73a8.84 8.84 0 0 1 7.9-6.93c.43-.03.77-.08.78-.1c.06-.17.5-2.999.47-3.039c-.01-.02-.1-.02-.2-.03Zm3.68.67c-.2 0-.3.1-.37.38c-.06.23-.46 2.42-.46 2.52c0 .04.1.11.22.16a8.51 8.499 0 0 1 2.99 2a8.38 8.379 0 0 1 2.16 3.449a6.9 6.9 0 0 1 .4 2.8c0 1.07 0 1.27-.1 1.73a9.4 9.4 0 0 1-1.76 3.769c-.32.4-.98 1.06-1.37 1.38c-.38.32-1.54 1.1-1.7 1.14c-.1.03-.1.06-.07.26c.03.18.64 2.56.7 2.78l.06.06a12.07 12.058 0 0 0 7.27-9.4c.13-.77.13-2.58 0-3.4a11.96 11.948 0 0 0-5.73-8.578c-.7-.42-2.05-1.06-2.25-1.06Z"/>
+                              <svg data-ui="instance-instance-worlds-tab-svg-1" data-icon="instance-instance-worlds-tab-svg-1" className="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                                <path data-ui="instance-instance-worlds-tab-path-1" fill="currentColor" d="M12.252.004a11.78 11.768 0 0 0-8.92 3.73a11 11 0 0 0-2.17 3.11a11.37 11.359 0 0 0-1.16 5.169c0 1.42.17 2.5.6 3.77c.24.759.77 1.899 1.17 2.529a12.3 12.298 0 0 0 8.85 5.639c.44.05 2.54.07 2.76.02c.2-.04.22.1-.26-1.7l-.36-1.37l-1.01-.06a8.5 8.489 0 0 1-5.18-1.8a5.3 5.3 0 0 1-1.3-1.26c0-.05.34-.28.74-.5a37.572 37.545 0 0 1 2.88-1.629c.03 0 .5.45 1.06.98l1 .97l2.07-.43l2.06-.43l1.47-1.47c.8-.8 1.48-1.5 1.48-1.52c0-.09-.42-1.63-.46-1.7c-.04-.06-.2-.03-1.02.18c-.53.13-1.2.3-1.45.4l-.48.15l-.53.53l-.53.53l-.93.1l-.93.07l-.52-.5a2.7 2.7 0 0 1-.96-1.7l-.13-.6l.43-.57c.68-.9.68-.9 1.46-1.1c.4-.1.65-.2.83-.33c.13-.099.65-.579 1.14-1.069l.9-.9l-.7-.7l-.7-.7l-1.95.54c-1.07.3-1.96.53-1.97.53c-.03 0-2.23 2.48-2.63 2.97l-.29.35l.28 1.03c.16.56.3 1.16.31 1.34l.03.3l-.34.23c-.37.23-2.22 1.3-2.84 1.63-.36.2-.37.2-.44.1c-.08-.1-.23-.6-.32-1.03c-.18-.86-.17-2.75.02-3.73a8.84 8.84 0 0 1 7.9-6.93c.43-.03.77-.08.78-.1c.06-.17.5-2.999.47-3.039c-.01-.02-.1-.02-.2-.03Zm3.68.67c-.2 0-.3.1-.37.38c-.06.23-.46 2.42-.46 2.52c0 .04.1.11.22.16a8.51 8.499 0 0 1 2.99 2a8.38 8.379 0 0 1 2.16 3.449a6.9 6.9 0 0 1 .4 2.8c0 1.07 0 1.27-.1 1.73a9.4 9.4 0 0 1-1.76 3.769c-.32.4-.98 1.06-1.37 1.38c-.38.32-1.54 1.1-1.7 1.14c-.1.03-.1.06-.07.26c.03.18.64 2.56.7 2.78l.06.06a12.07 12.058 0 0 0 7.27-9.4c.13-.77.13-2.58 0-3.4a11.96 11.948 0 0 0-5.73-8.578c-.7-.42-2.05-1.06-2.25-1.06Z"/>
                               </svg>
-                              fetch failed
+                              Modrinth
                             </>
                           ) : (
                             <>
-                              <svg className="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                                <path fill="currentColor" d="M18.326 9.215s4.9-.773 5.674-3.027h-7.507V4.4H0l2.032 2.358v2.415s5.127-.266 7.11 1.237c2.714 2.516-3.053 5.917-3.053 5.917l-.99 3.273c1.547-1.473 4.494-3.377 9.899-3.286c-2.057.65-4.125 1.665-5.735 3.286h10.925l-1.029-3.273s-7.918-4.668-.833-7.112"/>
+                              <svg data-ui="instance-instance-worlds-tab-svg-2" data-icon="instance-instance-worlds-tab-svg-2" className="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                                <path data-ui="instance-instance-worlds-tab-path-2" fill="currentColor" d="M18.326 9.215s4.9-.773 5.674-3.027h-7.507V4.4H0l2.032 2.358v2.415s5.127-.266 7.11 1.237c2.714 2.516-3.053 5.917-3.053 5.917l-.99 3.273c1.547-1.473 4.494-3.377 9.899-3.286c-2.057.65-4.125 1.665-5.735 3.286h10.925l-1.029-3.273s-7.918-4.668-.833-7.112"/>
                               </svg>
-                              fetch failed
+                              CurseForge
                             </>
                           )}
                         </button>
@@ -1197,33 +1217,35 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                   </div>
 
                   {searching && (
-                    <div className="mt-3 flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+                    <div data-ui="instance-instance-worlds-tab-div-81" className="mt-3 flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
                       <IconLoader2 className="h-4 w-4 animate-spin" /> {t("worlds.ui.searching")}
                     </div>
                   )}
 
                   {!searching && results && results.length === 0 && (
-                    <EmptyState compact title={t("worlds.ui.nothingFound")} className="mt-3 py-4" />
+                    <EmptyState compact title={t("worlds.ui.nothingFound")} className="mt-3 border-0 bg-transparent py-4" />
                   )}
 
                   {!searching && results && results.length > 0 && (
-                    <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
-                      {results.map(mod => (
-                        <div key={mod.id} className="flex items-center gap-3 rounded-xl border border-border/70 bg-card/60 p-2.5">
+                    <div data-ui="instance-instance-worlds-tab-div-82" className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {results.map(mod => {
+                        const installed = !!findInstalledDatapack(datapacks, mod)
+                        return (
+                        <div data-ui="instance-instance-worlds-tab-div-83" key={mod.id} className="flex items-center gap-3 rounded-xl border border-border/70 bg-card/60 p-2.5">
                           {mod.iconUrl ? (
-                            <img src={mod.iconUrl} alt="" className="h-9 w-9 flex-shrink-0 rounded-lg object-cover" />
+                            <img data-ui="instance-instance-worlds-tab-img-5" src={mod.iconUrl} alt="" className="h-9 w-9 flex-shrink-0 rounded-lg object-cover" />
                           ) : (
-                            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muted/50">
-                              <IconArchive className="h-4 w-4 text-muted-foreground/50" strokeWidth={1.75} />
+                            <div data-ui="instance-instance-worlds-tab-div-84" className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muted/50">
+                              <IconArchive className="h-4 w-4 text-primary" strokeWidth={1.75} />
                             </div>
                           )}
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium text-foreground">{mod.name}</div>
-                            <div className="truncate text-xs text-muted-foreground">
+                          <div data-ui="instance-instance-worlds-tab-div-85" className="min-w-0 flex-1">
+                            <div data-ui="instance-instance-worlds-tab-div-86" className="truncate text-sm font-medium text-foreground">{mod.name}</div>
+                            <div data-ui="instance-instance-worlds-tab-div-87" className="truncate text-xs text-muted-foreground">
                               {t("worlds.download_count", { count: mod.downloadCount.toLocaleString() })}
                             </div>
                           </div>
-                          <button
+                          <button data-ui="instance-instance-worlds-tab-button-26"
                             type="button"
                             onClick={() => void openDatapackDetails(mod)}
                             className="flex items-center gap-1.5 rounded-xl bg-muted/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -1231,21 +1253,24 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                             <IconInfoCircle className="h-3.5 w-3.5" strokeWidth={1.75} />
                             {t("worlds.details")}
                           </button>
-                          <button
+                          <button data-ui="instance-instance-worlds-tab-button-27"
                             type="button"
-                            disabled={installing === mod.id}
+                            disabled={!!installing || installed}
                             onClick={() => void handleInstallDatapackRemote(mod)}
-                            className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                            className={cn("flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed",
+                              installed ? "bg-muted text-primary" : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50")}
                           >
                             {installing === mod.id ? (
                               <IconLoader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                            ) : installed ? (
+                              <IconCheck className="h-3.5 w-3.5" strokeWidth={2} />
                             ) : (
                               <IconDownload className="h-3.5 w-3.5" strokeWidth={2} />
                             )}
-                            {t("worlds.ui.install")}
+                            {t(installed ? "addon.installed" : "worlds.ui.install")}
                           </button>
                         </div>
-                      ))}
+                      )})}
                     </div>
                   )}
                 </div>
@@ -1258,16 +1283,17 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
 
       {/* Copy / import name prompt modal */}
       {namePrompt && (
-        <ModalLayer
+        <ModalLayer windowId="instance-instance-worlds-tab-window-2"
           onClose={() => { if (!promptBusy) setNamePrompt(null) }}
-          className="bg-background/80 backdrop-blur-sm animate-in fade-in-0"
+          className="animate-in fade-in-0"
         >
-          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-2xl border border-border animate-in zoom-in-95">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-foreground">
+          <div data-ui="instance-instance-worlds-tab-div-88" className="w-full max-w-md rounded-2xl bg-card p-6 shadow-2xl border border-border animate-in zoom-in-95">
+            <div data-ui="instance-instance-worlds-tab-div-89" className="flex items-center justify-between">
+              <h3 data-ui="instance-instance-worlds-tab-h3-1" className="flex items-center gap-2 text-lg font-semibold text-foreground">
+                <ModalTitleIcon><IconMap className="h-4 w-4" strokeWidth={1.75} /></ModalTitleIcon>
                 {namePrompt.mode === "copy" ? t("worlds.ui.copyWorld") : t("worlds.ui.importWorldZip")}
               </h3>
-              <button
+              <button data-modal-close data-ui="instance-instance-worlds-tab-button-28"
                 type="button"
                 onClick={() => setNamePrompt(null)}
                 className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -1275,12 +1301,12 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
                 <IconX className="h-5 w-5" strokeWidth={1.5} />
               </button>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p data-ui="instance-instance-worlds-tab-p-4" className="mt-1 text-sm text-muted-foreground">
               {namePrompt.mode === "copy"
                 ? t("worlds.ui.copyHint", { name: selectedWorld?.name ?? "" })
                 : t("worlds.ui.importHint")}
             </p>
-            <input
+            <input data-ui="instance-instance-worlds-tab-input-7"
               type="text"
               value={promptValue}
               onChange={e => setPromptValue(e.target.value)}
@@ -1290,15 +1316,15 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
               placeholder={t("worlds.ui.namePlaceholder")}
               className="mt-4 h-12 w-full rounded-2xl border border-border bg-muted/40 px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary"
             />
-            <div className="mt-5 flex gap-3">
-              <button
+            <div data-ui="instance-instance-worlds-tab-div-90" className="mt-5 flex gap-3">
+              <button data-ui="instance-instance-worlds-tab-button-29"
                 type="button"
                 onClick={() => setNamePrompt(null)}
                 className="flex-1 rounded-2xl border border-border bg-muted/30 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
               >
-                {t("common.cancel")}
+                {<span className="inline-flex items-center justify-center gap-2"><LauncherCancelIcon className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />{t("common.cancel")}</span>}
               </button>
-              <button
+              <button data-ui="instance-instance-worlds-tab-button-30"
                 type="button"
                 disabled={promptBusy}
                 onClick={() => void submitNamePrompt()}
@@ -1312,47 +1338,17 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
         </ModalLayer>
       )}
 
-      {/* Delete confirm modal */}
-      {deleteOpen && selectedWorld && (
-        <ModalLayer
-          onClose={() => { if (!deleting) setDeleteOpen(false) }}
-          className="bg-background/80 backdrop-blur-sm animate-in fade-in-0"
-        >
-          <div className="w-full max-w-md rounded-2xl bg-card p-6 shadow-2xl border border-border animate-in zoom-in-95">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-foreground">{t("worlds.ui.deleteTitle")}</h3>
-              <button
-                type="button"
-                onClick={() => setDeleteOpen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <IconX className="h-5 w-5" strokeWidth={1.5} />
-              </button>
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {t("worlds.ui.deleteDescription", { name: selectedWorld.name })}
-            </p>
-            <div className="mt-5 flex gap-3">
-              <button
-                type="button"
-                onClick={() => setDeleteOpen(false)}
-                className="flex-1 rounded-2xl border border-border bg-muted/30 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-              >
-                {t("common.cancel")}
-              </button>
-              <button
-                type="button"
-                disabled={deleting}
-                onClick={() => void handleDelete()}
-                className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-destructive py-2.5 text-sm font-semibold text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-              >
-                {deleting && <IconLoader2 className="h-4 w-4 animate-spin" />}
-                {t("common.delete")}
-              </button>
-            </div>
-          </div>
-        </ModalLayer>
-      )}
+      <ActionConfirmDialog
+        open={deleteOpen && !!selectedWorld}
+        onClose={() => { if (!deleting) setDeleteOpen(false) }}
+        onConfirm={() => void handleDelete()}
+        title={t("worlds.ui.deleteTitle")}
+        description={selectedWorld ? t("worlds.ui.deleteDescription", { name: selectedWorld.name }) : ""}
+        confirmText={t("common.delete")}
+        cancelText={t("common.cancel")}
+        variant="danger"
+        icon="warning"
+      />
 
       {/* Datapack or Map details modal */}
       <InstanceModal
@@ -1363,9 +1359,9 @@ export function InstanceWorldsTab({ build }: InstanceWorldsTabProps) {
         displayedModalVersions={displayedModalVersions}
         onInstallVersion={(version) => {
           if (viewMode === "catalog") {
-            void handleInstallMapVersion(version)
+            return handleInstallMapVersion(version)
           } else {
-            void handleInstallDatapackVersion(version)
+            return handleInstallDatapackVersion(version)
           }
         }}
         onClose={() => setSelectedDetails(null)}

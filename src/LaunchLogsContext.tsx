@@ -228,7 +228,7 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
     pushNotification({
       kind: "success",
       source: "launch",
-      title: "fetch failed",
+      title: "Minecraft started",
       message: tRef.current("launcherStatus.running"),
     })
     patchLaunchUi({
@@ -274,6 +274,16 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
   }, [t])
 
   useEffect(() => {
+    const agentLaunch = (event: Event) => {
+      const success = (event as CustomEvent<{ success: boolean }>).detail?.success
+      setIsRunningTracked(!!success)
+      patchLaunchUi({ isLaunching: false, phase: "idle", ...(success ? { progress: 100, status: tRef.current("launcherStatus.starting") } : {}) })
+    }
+    window.addEventListener("launcher:agent-launch", agentLaunch)
+    return () => window.removeEventListener("launcher:agent-launch", agentLaunch)
+  }, [patchLaunchUi, setIsRunningTracked])
+
+  useEffect(() => {
     // Пока игра грузится, уведомление тоже держим живым: прогресса в процентах
     // ещё нет, поэтому полоса будет бегущей, а не «100%».
     const isBooting = isRunning && !gameReady
@@ -286,8 +296,8 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
     upsertLiveNotification("minecraft-launch", {
       kind: "progress",
       source: "launch",
-      title: launchUi.phase === "installing" ? "fetch failed" : "fetch failed",
-      message: launchUi.status || "fetch failed",
+      title: launchUi.phase === "installing" ? "Minecraft setup in progress" : "Minecraft launch in progress",
+      message: launchUi.status || "Preparing launcher activity...",
       progress: isBooting
         ? null
         : (typeof launchUi.progress === "number" ? Math.max(0, Math.min(100, Math.round(launchUi.progress))) : null),
@@ -311,7 +321,7 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
   // во время установки/скачивания. Повторный опрос (например, после смены языка)
   // помечал установку как «игра уже запущена» и подменял кнопку прогресса на «Стоп».
   useEffect(() => {
-    void window.electronAPI?.isMinecraftRunning().then((running) => {
+    void window.electrobunAPI?.isMinecraftRunning().then((running) => {
       const ui = launchUiRef.current
       if (ui.isLaunching || ui.phase === "installing" || ui.phase === "launching") return
       setIsRunning(!!running)
@@ -327,7 +337,7 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
   }, [patchLaunchUi])
 
   useEffect(() => {
-    const offDownload = window.electronAPI?.onMinecraftDownloadStatus?.((progress) => {
+    const offDownload = window.electrobunAPI?.onMinecraftDownloadStatus?.((progress) => {
       const patch: Partial<LaunchUiState> = {
         status: getStageLabel(progress.type, progress.installationPhase, tRef.current),
       }
@@ -343,7 +353,7 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
       if (progress.fileName || progress.name) patch.currentFileName = progress.fileName ?? progress.name ?? null
       patchLaunchUi(patch)
     })
-    const offJava = window.electronAPI?.onMinecraftJavaProgress?.((progress) => {
+    const offJava = window.electrobunAPI?.onMinecraftJavaProgress?.((progress) => {
       patchLaunchUi({
         progress: progress.percent,
         status: progress.message,
@@ -351,7 +361,7 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
       })
       addLog(`[Java] ${progress.message} ${progress.percent}%`, "launcher")
     })
-    const offDebug = window.electronAPI?.onMinecraftDebug?.((message) => {
+    const offDebug = window.electrobunAPI?.onMinecraftDebug?.((message) => {
       if (message && !shouldIgnoreDebugLog(message)) addLog(message)
       // Пока процесс жив, но игра не подтвердила готовность, статус не трогаем:
       // иначе «Игра запускается...» тут же затиралась очередной debug-строкой.
@@ -363,13 +373,13 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
         })
       }
     })
-    const offData = window.electronAPI?.onMinecraftData?.((line) => {
+    const offData = window.electrobunAPI?.onMinecraftData?.((line) => {
       if (line?.trim()) addLog(line.trimEnd())
       // Процесс жив с момента спавна, но «запущено» показываем только когда игра
       // реально поднялась (маркер в её логе) — либо по страховочному таймауту.
       if (line && GAME_READY_RE.test(line)) markGameReady()
     })
-    const offClose = window.electronAPI?.onMinecraftClose?.((info) => {
+    const offClose = window.electrobunAPI?.onMinecraftClose?.((info) => {
       const code = info?.code ?? 0
       const crashed = Boolean(info?.crashed)
       const crashReport = info?.crashReport
@@ -380,7 +390,7 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
       if (stoppedByLauncher) {
         addLog(tRef.current("logs.stoppedByLauncher"), "info")
       } else {
-        addLog(`fetch failed${code}]`, code === 0 ? "info" : "error")
+        addLog(`[Процесс завершен с кодом ${code}]`, code === 0 ? "info" : "error")
       }
       setIsRunningTracked(false)
       runningNotificationSentRef.current = false
@@ -406,13 +416,13 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
         pushNotification({
           kind: code === 0 ? "info" : "error",
           source: "launch",
-          title: code === 0 ? "fetch failed" : "fetch failed",
-          message: code === 0 ? "fetch failed" : `fetch failed${code}`,
+          title: code === 0 ? "Minecraft closed" : "Minecraft stopped with an error",
+          message: code === 0 ? "Game process finished normally." : `Exit code: ${code}`,
         })
       }
 
       resetLaunchUi()
-      window.electronAPI?.restore()
+      window.electrobunAPI?.restore()
 
       // Краш — сразу открываем логи: разбираться нужно именно там. Обычный
       // выход игру не прерывает, поэтому пользователя не дёргаем.
@@ -463,12 +473,12 @@ export function LaunchLogsProvider({ children }: PropsWithChildren) {
 export function useLaunchLogs() {
   const state = useContext(LaunchLogsStateContext)
   const controls = useContext(LaunchControlsContext)
-  if (!state || !controls) throw new Error("fetch failed")
+  if (!state || !controls) throw new Error("useLaunchLogs must be used inside LaunchLogsProvider")
   return useMemo(() => ({ ...state, ...controls }), [state, controls])
 }
 
 export function useLaunchControls() {
   const ctx = useContext(LaunchControlsContext)
-  if (!ctx) throw new Error("fetch failed")
+  if (!ctx) throw new Error("useLaunchLogs must be used inside LaunchLogsProvider")
   return ctx
 }

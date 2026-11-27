@@ -1,42 +1,49 @@
 import { cn } from "@/lib/utils"
 import { IconCheck } from "@tabler/icons-react"
-import { presetThemes } from "../settings/data"
+import type { Theme } from "../settings/types"
+import { ThemeCompactPreview } from "../settings/theme-preview"
 
 type StepThemeProps = {
+  /** Пресеты вместе со своими темами: список приходит из реестра тем. */
+  themes: Theme[]
   selectedTheme: string
   onSelect: (themeId: string) => void
 }
 
-export function StepTheme({ selectedTheme, onSelect }: StepThemeProps) {
+export function StepTheme({ themes, selectedTheme, onSelect }: StepThemeProps) {
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-4">
-        {presetThemes.map((theme) => (
-          <button
-            key={theme.id}
-            type="button"
-            onClick={() => onSelect(theme.id)}
-            className={cn(
-              "relative overflow-hidden rounded-xl border p-4 text-left transition-all duration-200",
-              selectedTheme === theme.id
-                ? "border-primary shadow-[0_0_15px_var(--glow-primary)]"
-                : "border-border hover:border-primary/50"
-            )}
-            style={{ backgroundColor: theme.background }}
-          >
-            <div className="mb-3 flex gap-2">
-              <div className="h-8 w-8 rounded-lg shadow-inner" style={{ backgroundColor: theme.primary }} />
-              <div className="h-8 w-8 rounded-lg shadow-inner" style={{ backgroundColor: theme.accent }} />
-              <div className="h-8 w-8 rounded-lg border border-white/20 shadow-inner" style={{ backgroundColor: theme.background }} />
-            </div>
-            <span className="font-medium text-white">{theme.name}</span>
-            {selectedTheme === theme.id && (
-              <div className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-primary">
-                <IconCheck className="h-4 w-4 text-primary-foreground" strokeWidth={2} />
+    <div data-ui="onboarding-step-theme-div-1" data-component="step-theme" className="space-y-5">
+      <div data-ui="onboarding-step-theme-div-2" className="grid grid-cols-2 gap-3">
+        {themes.map((theme) => {
+          const selected = selectedTheme === theme.id
+          return (
+            <button data-ui="onboarding-step-theme-button-1"
+              key={theme.id}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onSelect(theme.id)}
+              className={cn(
+                "rounded-2xl border p-3.5 text-left transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+                selected
+                  ? "border-primary/50 bg-primary/5"
+                  : "border-border bg-card/60 hover:border-primary/40 hover:bg-muted/30"
+              )}
+            >
+              {/* Компактная миниатюра окна как в оригинальном дизайне */}
+              <ThemeCompactPreview theme={theme} className="mb-3" />
+
+              <div data-ui="onboarding-step-theme-div-3" className="flex items-center justify-between gap-2">
+                <span data-ui="onboarding-step-theme-span-1" className="text-sm font-medium text-foreground">{theme.name}</span>
+                {selected && (
+                  <span data-ui="onboarding-step-theme-span-2" className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary">
+                    <IconCheck className="h-3.5 w-3.5 text-primary-foreground" strokeWidth={2.5} />
+                  </span>
+                )}
               </div>
-            )}
-          </button>
-        ))}
+            </button>
+          )
+        })}
       </div>
     </div>
   )

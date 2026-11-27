@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from "react"
+import { supportsQuickPlay } from "@xnlc/core/game-features"
 import { useTranslation } from "react-i18next"
 import type { Account } from "@/src/AccountsContext"
 import { useLaunchControls } from "@/src/LaunchLogsContext"
@@ -17,10 +18,10 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
   const { launchInstance } = useBuildLaunch({ account })
 
   const launchVanilla = useCallback(async (quickPlay?: QuickPlayLaunchRequest) => {
-    if (!account || !window.electronAPI) return
+    if (!account || !window.electrobunAPI) return
 
     const usesSkinInjector = account.type === "xnskins" || account.type === "elyby"
-    const normalizedJavaPath = normalizeJavaPath(await window.electronAPI.getSetting("javaPath"))
+    const normalizedJavaPath = normalizeJavaPath(await window.electrobunAPI.getSetting("javaPath"))
     const settings = await loadLaunchSettings()
     const { width, height } = resolveLaunchDimensions(settings)
     const server = settings.savedAutoJoinServer === "true" ? (settings.savedServer ?? "") : ""
@@ -42,13 +43,13 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
       currentFileName: null,
     })
     clearLogs()
-    addLog(`fetch failed${selectedVersion} · ${formatLoaderLabel(selectedModLoader, selectedLoaderVersion)} · ${account.username}`)
+    addLog(`[Запуск] Minecraft ${selectedVersion} · ${formatLoaderLabel(selectedModLoader, selectedLoaderVersion)} · ${account.username}`)
 
-    const result = await window.electronAPI.launchMinecraft({
+    const result = await window.electrobunAPI.launchMinecraft({
       version: selectedVersion,
-      modLoader: selectedModLoader as "vanilla" | "forge" | "fabric" | "quilt" | "liteloader" | "optifine" | "neoforge",
+      modLoader: selectedModLoader as import("@xnlc/types").MinecraftLaunchParams["modLoader"],
       ...(selectedLoaderVersion ? { loaderVersion: selectedLoaderVersion } : {}),
-      account: { type: account.type, username: account.username, uuid: account.uuid, accessToken: account.accessToken },
+      account: { id: account.id, type: account.type, username: account.username, uuid: account.uuid },
       memory: { min: settings.savedMemoryMin || "512M", max: settings.savedMemoryMax || "4G" },
       width,
       height,
@@ -61,14 +62,14 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
 
     patchLaunchUi(result.success
       ? { isLaunching: false, phase: "idle", progress: 100, status: t("launcherStatus.starting") }
-      : { isLaunching: false, status: result.error ?? "fetch failed" })
-    if (!result.success) addLog(`fetch failed${result.error ?? "fetch failed"}`, "error")
+      : { isLaunching: false, status: result.error ?? "Ошибка запуска" })
+    if (!result.success) addLog(`[Лаунчер] ${result.error ?? "Ошибка запуска"}`, "error")
     if (result.success) {
       setIsRunning(true)
       saveLastLaunchedPrefs(selectedVersion, selectedModLoader, selectedLoaderVersion)
-      const afterLaunch = await window.electronAPI?.getSetting("afterLaunch")
-      if (afterLaunch === "minimize") window.electronAPI?.minimize()
-      else if (afterLaunch === "close") window.electronAPI?.close()
+      const afterLaunch = await window.electrobunAPI?.getSetting("afterLaunch")
+      if (afterLaunch === "minimize") window.electrobunAPI?.minimize()
+      else if (afterLaunch === "close") window.electrobunAPI?.close()
     }
   }, [account, addLog, clearLogs, patchLaunchUi, selectedLoaderVersion, selectedModLoader, selectedVersion, setIsRunning, t])
 
@@ -77,21 +78,21 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
    * Возвращает null, если выбор некорректен (ошибка уже показана в UI).
    */
   const resolveLaunchTarget = useCallback(async (): Promise<{ build?: BuildLaunchParams } | null> => {
-    if (!window.electronAPI) return null
+    if (!window.electrobunAPI) return null
 
     if (selectedModLoader === "instance") {
       if (!selectedVersion) {
-        patchLaunchUi({ isLaunching: false, phase: "idle", progress: null, status: "fetch failed" })
-        addLog("fetch failed", "error")
+        patchLaunchUi({ isLaunching: false, phase: "idle", progress: null, status: "Не выбрана сборка" })
+        addLog("[Лаунчер] Не выбрана сборка", "error")
         return null
       }
 
       // Лёгкий список: для запуска нужны версия/загрузчик/путь, а не контент сборки.
-      const builds = (await window.electronAPI?.loadBuildsLight()) ?? []
+      const builds = (await window.electrobunAPI?.loadBuildsLight()) ?? []
       const build = builds.find((item) => item.name === selectedVersion)
       if (!build) {
-        patchLaunchUi({ isLaunching: false, phase: "idle", progress: null, status: "fetch failed" })
-        addLog(`fetch failed${selectedVersion}fetch failed`, "error")
+        patchLaunchUi({ isLaunching: false, phase: "idle", progress: null, status: "Сборка не найдена" })
+        addLog(`[Лаунчер] Сборка "${selectedVersion}" не найдена`, "error")
         return null
       }
 
@@ -99,8 +100,8 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
     }
 
     if (!selectedVersion) {
-      patchLaunchUi({ isLaunching: false, phase: "idle", progress: null, status: "fetch failed" })
-      addLog("fetch failed", "error")
+      patchLaunchUi({ isLaunching: false, phase: "idle", progress: null, status: "Не выбрана версия" })
+      addLog("[Лаунчер] Не выбрана версия Minecraft", "error")
       return null
     }
 
@@ -112,12 +113,12 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
       // Процесс стартует раньше, чем открывается окно игры: пока игра не
       // подтвердила готовность, кнопка — «Запускается...», и клик ничего не гасит.
       if (!gameReady) return
-      return await window.electronAPI?.stopMinecraft()
+      return await window.electrobunAPI?.stopMinecraft()
     }
     // Пока идёт запуск/установка, повторный клик ничего не делает: раньше он
     // уходил во второй launch и два JVM дрались за одну папку инстанса.
     if (launchUi.isLaunching) return
-    if (!account || !window.electronAPI) return
+    if (!account || !window.electrobunAPI) return
 
     const target = await resolveLaunchTarget()
     if (!target) return
@@ -136,12 +137,13 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
    * Java/инъекторов — отличается только адресом подключения.
    */
   const handleQuickPlay = useCallback(async (type: "singleplayer" | "multiplayer", address: string) => {
-    if (isRunning || launchUi.isLaunching || !account || !window.electronAPI) return
+    if (isRunning || launchUi.isLaunching || !account || !window.electrobunAPI) return
 
     const target = await resolveLaunchTarget()
     if (!target) return
 
     const quickPlay: QuickPlayLaunchRequest = { type, address }
+    if (!supportsQuickPlay(target.build?.version ?? selectedVersion)) return
 
     if (target.build) {
       await launchInstance(target.build, { quickPlay })
@@ -149,12 +151,12 @@ export function useHomeLaunch({ account, selectedVersion, selectedModLoader, sel
     }
 
     await launchVanilla(quickPlay)
-  }, [isRunning, launchUi.isLaunching, account, resolveLaunchTarget, launchInstance, launchVanilla])
+  }, [isRunning, launchUi.isLaunching, account, resolveLaunchTarget, launchInstance, launchVanilla, selectedVersion])
 
   const launchDetails = useMemo(() => {
     const parts: string[] = []
     if (launchUi.currentFile !== null && launchUi.totalFiles !== null && launchUi.totalFiles > 0) {
-      parts.push(`${Math.min(launchUi.currentFile, launchUi.totalFiles)} / ${launchUi.totalFiles}fetch failed`)
+      parts.push(`${Math.min(launchUi.currentFile, launchUi.totalFiles)} / ${launchUi.totalFiles} файлов`)
     }
     if (launchUi.currentFileName) {
       parts.push(launchUi.currentFileName)

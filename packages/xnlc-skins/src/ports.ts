@@ -4,7 +4,7 @@
 //
 // Пакет не знает ни про Electron, ни про SQLite, ни про файловую систему:
 // всё, что выходит за пределы домена скинов, описано здесь интерфейсами, а
-// реализации живут в лаунчере (`electron/main/skins/`).
+// реализации живут в лаунчере (`electrobun/main/skins/`).
 //
 // Такое разделение позволяет тестировать домен без Electron и переиспользовать
 // пакет где угодно.
@@ -42,18 +42,23 @@ export interface SkinLibraryStore {
   }): Promise<LibrarySkin | null>
   /** Удаляет запись вместе с файлом текстуры. */
   remove(id: string): Promise<void>
-  update(id: string, patch: { variant?: "classic" | "slim"; capeId?: string | null; name?: string }): Promise<void>
+  update(id: string, patch: { variant?: "classic" | "slim"; capeId?: string | null; name?: string; sourceId?: string | null }): Promise<void>
   /** Текстура записи: нужна, чтобы надеть скин или импортировать его заново. */
   readTexture(id: string): Promise<Uint8Array | null>
 }
 
 export type ResolvedSkinAccount = {
   id: string
-  /** `microsoft` / `elyby` / `xnskins` — от этого зависит, какой API спрашивать. */
+  /** `microsoft` / `elyby` / `xnskins` / `authlib-injector` / `offline` — от этого зависит, какой API спрашивать. */
   type: string
   username?: string
-  accessToken: string
+  uuid?: string
+  accessToken?: string
   refreshToken?: string
+  serverUrl?: string
+  serverId?: string
+  clientToken?: string
+  skinUrl?: string
 }
 
 /**

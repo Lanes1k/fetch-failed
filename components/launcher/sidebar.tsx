@@ -1,5 +1,5 @@
-import { useState } from "react"
 import { useTranslation } from "react-i18next"
+import { preloadPage } from "./page-loaders"
 import { cn } from "@/lib/utils"
 import {
   IconHome,
@@ -8,14 +8,14 @@ import {
   IconCloud,
   IconUserCircle,
   IconSettings,
-  IconChevronRight,
   IconColorSwatch,
   IconShirt,
   IconServer,
   IconChartBar,
+  IconRobot,
 } from "@tabler/icons-react";
 
-type TabId = "home" | "builds" | "logs" | "cloud" | "accounts" | "settings" | "themes" | "skins" | "servers" | "stats";
+export type TabId = "home" | "builds" | "agent" | "logs" | "cloud" | "accounts" | "settings" | "themes" | "skins" | "servers" | "stats";
 
 interface SidebarItem {
   id: TabId;
@@ -45,6 +45,11 @@ const sidebarItems: SidebarItem[] = [
     icon: <IconServer className="w-6 h-6 flex-shrink-0" strokeWidth={1.75} />,
   },
   {
+    id: "logs",
+    labelKey: "sidebar.logs",
+    icon: <IconFileText className="w-6 h-6 flex-shrink-0" strokeWidth={1.75} />,
+  },
+  {
     id: "accounts",
     labelKey: "sidebar.accounts",
     icon: <IconUserCircle className="w-6 h-6 flex-shrink-0" strokeWidth={1.75} />,
@@ -55,19 +60,19 @@ const sidebarItems: SidebarItem[] = [
     icon: <IconShirt className="w-6 h-6 flex-shrink-0" strokeWidth={1.75} />,
   },
   {
-    id: "logs",
-    labelKey: "sidebar.logs",
-    icon: <IconFileText className="w-6 h-6 flex-shrink-0" strokeWidth={1.75} />,
-  },
-  {
-    id: "stats",
-    labelKey: "sidebar.stats",
-    icon: <IconChartBar className="w-6 h-6 flex-shrink-0" strokeWidth={1.75} />,
+    id: "agent",
+    labelKey: "sidebar.agent",
+    icon: <IconRobot className="w-6 h-6 flex-shrink-0" strokeWidth={1.75} />,
   },
   {
     id: "cloud",
     labelKey: "sidebar.cloud",
     icon: <IconCloud className="w-6 h-6 flex-shrink-0" strokeWidth={1.75} />,
+  },
+  {
+    id: "stats",
+    labelKey: "sidebar.stats",
+    icon: <IconChartBar className="w-6 h-6 flex-shrink-0" strokeWidth={1.75} />,
   },
   {
     id: "settings",
@@ -78,75 +83,53 @@ const sidebarItems: SidebarItem[] = [
 
 export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
   const { t } = useTranslation();
-  const [isExpanded, setIsExpanded] = useState(false);
+
+  const mainItems = sidebarItems.filter((item) => item.id !== "settings");
+  const settingsItem = sidebarItems.find((item) => item.id === "settings");
+
+  const renderItem = (item: SidebarItem) => (
+    <div data-ui="sidebar-div-1" key={item.id} className="relative group sidebar-item-wrapper" data-sidebar-item={item.id}>
+      <button data-ui="sidebar-button-1"
+        id={`sidebar-item-${item.id}`}
+        aria-label={t(item.labelKey)}
+        data-active={activeTab === item.id}
+        onClick={() => onTabChange(item.id)}
+        onPointerEnter={() => { void preloadPage(item.id) }}
+        onFocus={() => { void preloadPage(item.id) }}
+        className={cn(
+          "sidebar-item-btn relative rounded-xl flex items-center transition-all duration-300 justify-center mx-auto w-12 h-12",
+          "hover:bg-sidebar-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+          activeTab === item.id
+            ? "bg-sidebar-primary/20 text-sidebar-primary shadow-[0_0_15px_var(--glow-primary)]"
+            : "text-sidebar-foreground/65 hover:text-sidebar-primary"
+        )}
+      >
+        <span data-ui="sidebar-span-1"
+          className={cn(
+            "sidebar-item-indicator absolute left-0 w-1 h-6 rounded-r-full bg-sidebar-primary transition-all duration-300",
+            activeTab === item.id ? "opacity-100" : "opacity-0"
+          )}
+        />
+        
+        {item.icon}
+      </button>
+
+      <div data-ui="sidebar-div-2" className="sidebar-tooltip absolute left-full top-1/2 -translate-y-1/2 ml-3 px-3 py-1.5 rounded-lg bg-popover border border-border shadow-lg text-sm font-medium text-popover-foreground whitespace-nowrap opacity-0 scale-95 pointer-events-none transition-all duration-150 z-50 group-hover:opacity-100 group-hover:scale-100">
+        {t(item.labelKey)}
+      </div>
+    </div>
+  );
 
   return (
-    <aside 
-      className={cn(
-        "h-full bg-sidebar/95 border-r border-sidebar-border flex flex-col py-6 gap-2 transition-all duration-300 ease-in-out",
-        isExpanded ? "w-[240px]" : "w-[72px]"
-      )}
-    >
-      <div className={cn(
-        "flex items-center mb-4 px-2",
-        isExpanded ? "justify-end" : "justify-center"
-      )}>
-        <button
-          onClick={() => setIsExpanded(!isExpanded)}
-          className="flex items-center justify-center transition-all duration-200 text-muted-foreground hover:text-primary"
-        >
-          <IconChevronRight
-            className={cn(
-              "w-6 h-6 transition-transform duration-300",
-              isExpanded && "rotate-180"
-            )}
-            strokeWidth={1.75}
-          />
-        </button>
-      </div>
-
-      <nav className="flex flex-col gap-1 flex-1 px-2">
-        {sidebarItems.map((item) => (
-          <div key={item.id} className="relative group">
-            <button
-              onClick={() => onTabChange(item.id)}
-              className={cn(
-                "relative rounded-xl flex items-center transition-all duration-300 w-full h-12",
-                "hover:bg-primary/10",
-                isExpanded 
-                  ? "px-3 gap-3 justify-start" 
-                  : "justify-center mx-auto w-12",
-                activeTab === item.id
-                  ? "bg-primary/20 text-primary shadow-[0_0_15px_var(--glow-primary)]"
-                  : "text-muted-foreground hover:text-primary"
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute left-0 w-1 h-6 rounded-r-full bg-primary transition-all duration-300",
-                  activeTab === item.id ? "opacity-100" : "opacity-0"
-                )}
-              />
-              
-              {item.icon}
-              
-              {isExpanded && (
-                <span className="text-sm font-medium whitespace-nowrap overflow-hidden">
-                  {t(item.labelKey)}
-                </span>
-              )}
-            </button>
-
-            {!isExpanded && (
-              <div className="absolute left-full top-1/2 -translate-y-1/2 ml-3 px-3 py-1.5 rounded-lg bg-popover border border-border shadow-lg text-sm font-medium text-popover-foreground whitespace-nowrap opacity-0 scale-95 pointer-events-none transition-all duration-150 z-50 group-hover:opacity-100 group-hover:scale-100">
-                {t(item.labelKey)}
-              </div>
-            )}
+    <aside data-ui="sidebar-aside-1" data-component="sidebar" id="launcher-sidebar" className="relative z-40 h-full bg-sidebar/95 border-r border-sidebar-border flex flex-col py-6 gap-2 w-[72px]">
+      <nav data-ui="sidebar-nav-1" id="sidebar-nav" className="flex flex-col gap-1 flex-1 px-2">
+        {mainItems.map(renderItem)}
+        {settingsItem && (
+          <div data-ui="sidebar-div-3" id="sidebar-footer" className="mt-auto pt-2 border-t border-sidebar-border/40">
+            {renderItem(settingsItem)}
           </div>
-        ))}
+        )}
       </nav>
     </aside>
   );
 }
-
-export type { TabId };
