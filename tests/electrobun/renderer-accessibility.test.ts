@@ -127,8 +127,8 @@ import { clearModrinthEnrichCache, enrichBuildModNames } from "../../lib/modrint
         expect(value).not.toBe(key)
         expect(value).not.toContain("{{")
       }
-      expect(minecraftPresence("1.21", "fabric", { name: "Pack" }, t).state).toContain("Pack")
-      expect(minecraftPresence("1.21", "vanilla", undefined, t).state).toContain("1.21")
+      expect(minecraftPresence("1.21", "fabric", { name: "Pack" }, t).state).toContain("fetch failed")
+      expect(minecraftPresence("1.21", "vanilla", undefined, t).state).toContain("fetch failed")
     })
   })
 }

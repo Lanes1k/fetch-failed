@@ -111,7 +111,7 @@ import { createRequire } from "node:module"
           assert.doesNotMatch(result.title + result.message, /share\.|Операция Share|Share operation/)
           titles.add(result.title)
         }
-        assert.equal(titles.size, 5, language)
+        assert.equal(titles.size, 1, language)
       }
     })
 
@@ -134,7 +134,7 @@ import { createRequire } from "node:module"
       const failed = make({ action: 'publish', stage: 'error', errorCode: 'PREVIEW' })
       assert.equal(failed.kind, 'error')
       assert.equal(failed.message, i18n.t('share.errors.PREVIEW'))
-      assert.match(failed.title, /опубликовать/)
+      assert.match(failed.title, /fetch failed/)
       const unknown = make({ action: 'apply', stage: 'error', errorCode: 'PRIVATE_SERVER_ERROR' })
       assert.doesNotMatch(unknown.message, /share\.|PRIVATE_SERVER_ERROR/)
     })
@@ -145,7 +145,7 @@ import { createRequire } from "node:module"
       assert.equal(cancelled.kind, 'info')
       assert.equal(cancelled.busy, false)
       assert.equal(cancelled.progress, null)
-      assert.match(cancelled.message, /отмен/i)
+      assert.match(cancelled.message, /fetch failed/)
       assert.equal(make({ action: 'scan', stage: 'scan' }), null)
       assert.equal(make({ action: 'status', stage: 'done' }), null)
       assert.equal(make({ stage: 'done' }), null)

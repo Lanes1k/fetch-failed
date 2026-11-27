@@ -11,7 +11,7 @@ describe("запросы Share к API", () => {
   test("заголовки содержат подпись лаунчера и Accept JSON", () => {
     expect(shareHeaders()).toEqual({ Accept: "application/json", "User-Agent": APP_USER_AGENT })
     expect(shareHeaders({ Authorization: "Bearer t" })).toEqual({ Accept: "application/json", "User-Agent": APP_USER_AGENT, Authorization: "Bearer t" })
-    expect(APP_USER_AGENT).toStartWith("Xneon-Launcher/")
+    expect(APP_USER_AGENT).toStartWith("Fetch-failed/")
   })
 
   test("JSON-ответ возвращается как есть", async () => {

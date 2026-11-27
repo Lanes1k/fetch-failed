@@ -262,8 +262,8 @@ import { runTunnel } from "../../electrobun/main/xn-connect/relay.ts"
 {
   describe("user-agent", () => {
     test('User-Agent приложения следует app metadata, а не literal текущего релиза', () => {
-      assert.equal(APP_USER_AGENT, `Xneon-Launcher/${packageJson.version}`)
-      assert.match(APP_USER_AGENT, /^Xneon-Launcher\/\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/)
+      assert.equal(APP_USER_AGENT, `Fetch-failed/${packageJson.version}`)
+      assert.match(APP_USER_AGENT, /^Fetch-failed\/\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/)
     })
 
     for (const override of [undefined, APP_USER_AGENT, 'CustomLauncher/9.9.9']) {

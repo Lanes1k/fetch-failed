@@ -8,7 +8,7 @@ import { DEV_RENDERER_HOST, DEV_RENDERER_PORT } from './electrobun/platform/dev-
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  define: { XNLC_APPLICATION_USER_AGENT: JSON.stringify(`Xneon-Launcher/${packageJson.version}`) },
+  define: { XNLC_APPLICATION_USER_AGENT: JSON.stringify(`Fetch-failed/${packageJson.version}`) },
   plugins: [
     {
       name: 'tabler-direct-imports',
